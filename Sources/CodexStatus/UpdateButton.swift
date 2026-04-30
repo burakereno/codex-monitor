@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct UpdateButton: View {
@@ -33,6 +34,10 @@ struct UpdateButton: View {
         }
         .buttonStyle(.plain)
         .disabled(updater.isDownloading)
+        .onHover { hovering in
+            if hovering && !updater.isDownloading { NSCursor.pointingHand.push() }
+            else { NSCursor.pop() }
+        }
         .help(updater.isDownloading ? "Downloading update" : "Download Codex Monitor \(version)")
     }
 }

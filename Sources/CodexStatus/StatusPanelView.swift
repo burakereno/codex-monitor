@@ -15,30 +15,34 @@ struct StatusPanelView: View {
 
             Divider().opacity(0.5)
 
-            ScrollView {
-                ZStack(alignment: .topLeading) {
-                    if showSettings {
+            ZStack {
+                if showSettings {
+                    ScrollView {
                         settingsContent
-                            .transition(.asymmetric(
-                                insertion: .move(edge: .trailing).combined(with: .opacity),
-                                removal: .move(edge: .trailing).combined(with: .opacity)
-                            ))
-                    } else {
-                        content
-                            .transition(.asymmetric(
-                                insertion: .move(edge: .leading).combined(with: .opacity),
-                                removal: .move(edge: .leading).combined(with: .opacity)
-                            ))
+                            .padding(.horizontal, 12)
+                            .padding(.top, 10)
+                            .padding(.bottom, 12)
                     }
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .trailing).combined(with: .opacity),
+                        removal: .move(edge: .trailing).combined(with: .opacity)
+                    ))
+                } else {
+                    ScrollView {
+                        content
+                            .padding(.horizontal, 12)
+                            .padding(.top, 10)
+                            .padding(.bottom, 12)
+                    }
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .leading).combined(with: .opacity),
+                        removal: .move(edge: .leading).combined(with: .opacity)
+                    ))
                 }
-                .padding(.horizontal, 12)
-                .padding(.top, 10)
-                .padding(.bottom, 12)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipped()
-            .animation(.easeInOut(duration: 0.24), value: showSettings)
+            .animation(.snappy(duration: 0.24), value: showSettings)
 
             Divider().opacity(0.5)
 
@@ -127,9 +131,7 @@ struct StatusPanelView: View {
                 .buttonStyle(.plain)
             }
 
-            SettingsSectionView(title: "UPDATES") {
-                SettingsUpdateRowView(updater: updater)
-            }
+            SettingsAboutCardView(updater: updater)
         }
     }
 
@@ -148,7 +150,7 @@ struct StatusPanelView: View {
             Spacer()
 
             Button {
-                withAnimation(.easeInOut(duration: 0.24)) {
+                withAnimation(.snappy(duration: 0.24)) {
                     showSettings.toggle()
                 }
             } label: {
@@ -615,90 +617,152 @@ private struct SettingsInfoRowView: View {
     }
 }
 
-private struct SettingsUpdateRowView: View {
+private struct SettingsAboutCardView: View {
     @ObservedObject var updater: UpdateChecker
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        HStack(spacing: 9) {
-            Image(systemName: updateIcon)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(updateColor)
-                .frame(width: 20)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text("ABOUT")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(headerForeground)
+                    .tracking(0.5)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(updateTitle)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.primary)
+                Spacer(minLength: 8)
 
-                Text(updateSubtitle)
-                    .font(.system(size: 9.5, weight: .medium))
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+                updateCheckButton
             }
 
-            Spacer(minLength: 8)
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text("Codex Monitor")
+                            .font(.system(size: 13, weight: .bold))
 
-            if updater.updateAvailable, let latestVersion = updater.latestVersion {
-                UpdateButton(version: latestVersion)
-            } else {
-                Button {
-                    Task { await updater.checkForUpdates(force: true) }
-                } label: {
-                    if updater.isChecking {
-                        ProgressView()
-                            .controlSize(.small)
-                            .frame(width: 18, height: 18)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 12, weight: .semibold))
+                        Text("Version \(updater.currentVersion)")
+                            .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.secondary)
-                            .frame(width: 18, height: 18)
                     }
+
+                    Text("Lightweight Codex usage monitor for macOS")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+
+                    updateStatusText
                 }
-                .buttonStyle(.plain)
-                .disabled(updater.isChecking)
-                .help(updater.isChecking ? "Checking for Updates" : "Check for Updates")
+
+                Spacer(minLength: 8)
+
+                if updater.updateAvailable, let latestVersion = updater.latestVersion {
+                    UpdateButton(version: latestVersion)
+                }
             }
         }
-        .padding(.vertical, 3)
+        .padding(12)
+        .background {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(cardFill)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(cardHighlight, lineWidth: 0.5)
+                }
+                .shadow(color: cardShadow, radius: 8, y: 2)
+        }
     }
 
-    private var updateTitle: String {
-        if updater.updateAvailable, let latestVersion = updater.latestVersion {
-            return "Update \(latestVersion) Available"
+    private var updateCheckButton: some View {
+        Button {
+            Task { await updater.checkForUpdates(force: true) }
+        } label: {
+            HStack(spacing: 4) {
+                if updater.isChecking {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(width: 12, height: 12)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 9, weight: .semibold))
+                }
+
+                Text(updateCheckButtonTitle)
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .foregroundStyle(updateCheckButtonForeground)
+            .frame(width: 86, height: 24)
+            .background {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color.primary.opacity(updater.isChecking ? 0.035 : 0.06))
+            }
         }
-        if updater.isChecking { return "Checking for Updates" }
-        if updater.lastError != nil { return "Update Check Failed" }
-        if updater.isUpToDate { return "Up to Date" }
-        return "Version \(updater.currentVersion)"
+        .buttonStyle(.plain)
+        .frame(width: 86, height: 24)
+        .contentShape(Rectangle())
+        .disabled(updater.isChecking)
+        .help(updater.isChecking ? "Checking for Updates" : "Check for Updates")
+        .animation(.easeInOut(duration: 0.18), value: updater.isChecking)
+        .animation(.easeInOut(duration: 0.18), value: updater.lastCheckCompletedAt)
     }
 
-    private var updateSubtitle: String {
-        if updater.isDownloading {
-            return "Downloading \(Int(updater.downloadProgress * 100))%"
-        }
-        if let lastError = updater.lastError {
-            return lastError
-        }
-        if updater.isUpToDate {
-            return "Codex Monitor \(updater.currentVersion) is current"
-        }
-        return "GitHub releases are checked conservatively"
+    private var updateCheckButtonTitle: String {
+        if updater.isChecking { return "Checking" }
+        if updater.lastError != nil { return "Failed" }
+        if updater.isUpToDate && updater.lastCheckCompletedAt != nil { return "Up to date" }
+        return "Check"
     }
 
-    private var updateIcon: String {
-        if updater.updateAvailable { return "arrow.down.circle.fill" }
-        if updater.lastError != nil { return "exclamationmark.triangle.fill" }
-        if updater.isUpToDate { return "checkmark.circle.fill" }
-        return "arrow.down.circle"
-    }
-
-    private var updateColor: Color {
-        if updater.updateAvailable { return .green }
-        if updater.lastError != nil { return .orange }
-        if updater.isUpToDate { return .green }
+    private var updateCheckButtonForeground: Color {
+        if updater.isChecking { return Color(nsColor: .tertiaryLabelColor) }
+        if updater.lastError != nil { return .red }
+        if updater.isUpToDate && updater.lastCheckCompletedAt != nil { return .green }
         return .secondary
+    }
+
+    @ViewBuilder
+    private var updateStatusText: some View {
+        if updater.isChecking {
+            Text("Checking for updates...")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+        } else if updater.updateAvailable, let latestVersion = updater.latestVersion {
+            Text("Version \(latestVersion) available")
+                .font(.system(size: 10))
+                .foregroundStyle(.orange)
+        } else if updater.lastError != nil {
+            Text("Update check failed")
+                .font(.system(size: 10))
+                .foregroundStyle(.red)
+        } else if updater.isUpToDate && updater.lastCheckCompletedAt != nil {
+            Text("Up to date")
+                .font(.system(size: 10))
+                .foregroundStyle(.green)
+        }
+    }
+
+    private var cardFill: Color {
+        if colorScheme == .dark {
+            return Color.black.opacity(0.30)
+        }
+        return Color.black.opacity(0.03)
+    }
+
+    private var cardHighlight: Color {
+        if colorScheme == .dark {
+            return Color.white.opacity(0.07)
+        }
+        return Color.black.opacity(0.045)
+    }
+
+    private var cardShadow: Color {
+        colorScheme == .dark ? Color.black.opacity(0.32) : Color.black.opacity(0.065)
+    }
+
+    private var headerForeground: Color {
+        if colorScheme == .dark {
+            return Color(nsColor: .secondaryLabelColor)
+        }
+        return Color(nsColor: .tertiaryLabelColor)
     }
 }
 
