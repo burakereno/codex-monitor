@@ -1,0 +1,97 @@
+name: Build & Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Auto Version
+        id: version
+        run: |
+          LATEST=$(git tag -l 'v*' --sort=-v:refname | head -1)
+          if [ -z "$LATEST" ]; then
+            NEW_VERSION="v0.1.0"
+          else
+            VERSION=${LATEST#v}
+            MAJOR=$(echo "$VERSION" | cut -d. -f1)
+            MINOR=$(echo "$VERSION" | cut -d. -f2)
+            PATCH=$(echo "$VERSION" | cut -d. -f3)
+            PATCH=$((PATCH + 1))
+            NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          fi
+
+          SHORT_VERSION="${NEW_VERSION#v}"
+          BUILD_NUMBER=$(echo "$SHORT_VERSION" | cut -d. -f3)
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "short_version=$SHORT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "New version: $NEW_VERSION"
+
+      - name: Build App Bundle
+        run: |
+          APP_VERSION="${{ steps.version.outputs.short_version }}" \
+          APP_BUILD_NUMBER="${{ steps.version.outputs.build_number }}" \
+          ./scripts/build-app.sh
+
+      - name: Verify Built App Version
+        run: |
+          BUILT=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" .build/CodexStatus.app/Contents/Info.plist)
+          EXPECTED="${{ steps.version.outputs.short_version }}"
+          if [ "$BUILT" != "$EXPECTED" ]; then
+            echo "::error::Built app reports $BUILT but expected $EXPECTED"
+            exit 1
+          fi
+          echo "Built app version $BUILT matches tag"
+
+      - name: Create DMG
+        run: |
+          mkdir -p dmg_source
+          cp -R .build/CodexStatus.app dmg_source/
+          ln -s /Applications dmg_source/Applications
+          hdiutil create -volname "Codex Monitor" -srcfolder dmg_source -ov -format UDZO CodexMonitor.dmg
+          rm -rf dmg_source
+
+      - name: Create Tag
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git tag "${{ steps.version.outputs.version }}"
+          git push origin "${{ steps.version.outputs.version }}"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          files: CodexMonitor.dmg
+          body: |
+            ## Codex Monitor ${{ steps.version.outputs.version }}
+
+            ### Installation
+            1. Download **CodexMonitor.dmg** below
+            2. Open DMG and drag **CodexStatus.app** to Applications
+            3. Run in Terminal if macOS blocks first launch:
+            ```bash
+            xattr -cr /Applications/CodexStatus.app
+            ```
+            4. Launch CodexStatus — it will appear in your menu bar
+
+            ### Requirements
+            - macOS 13.0 or later
+            - Codex installed and logged in locally
