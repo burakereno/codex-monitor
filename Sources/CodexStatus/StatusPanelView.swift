@@ -195,6 +195,14 @@ struct StatusPanelView: View {
 
             Spacer()
 
+            footerTrailingActions
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    private var footerTrailingActions: some View {
+        HStack(spacing: 8) {
             if updater.updateAvailable, let latestVersion = updater.latestVersion {
                 UpdateButton(version: latestVersion)
             } else {
@@ -216,8 +224,6 @@ struct StatusPanelView: View {
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
     }
 
     private var footerVersionStatus: some View {
@@ -245,7 +251,7 @@ struct StatusPanelView: View {
                 .foregroundStyle(footerUpdateColor)
                 .lineLimit(1)
         }
-        .frame(maxWidth: 112, alignment: .leading)
+        .fixedSize(horizontal: true, vertical: false)
         .animation(.easeInOut(duration: 0.18), value: updater.isChecking)
         .animation(.easeInOut(duration: 0.18), value: updater.lastCheckCompletedAt)
         .onChange(of: updater.lastCheckCompletedAt) { _ in
