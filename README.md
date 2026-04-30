@@ -27,6 +27,7 @@
 - **Credits** — available credit balance when reported by Codex
 - **Menu bar display modes** — compact native status item layouts
 - **Refresh + dashboard** — manual refresh and quick access to the Codex dashboard
+- **One-click in-app updates** — checks GitHub releases, downloads the latest DMG, and installs it
 - **Local-only reads** — uses `codex app-server --listen stdio://`; it does not start Codex tasks or send prompts to a model
 - **Native macOS** — SwiftUI + AppKit, runs as a menu bar app
 

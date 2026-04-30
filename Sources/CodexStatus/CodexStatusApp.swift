@@ -21,9 +21,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         statusController = StatusBarController(model: statusModel)
         statusModel.start()
+        UpdateChecker.shared.start()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         statusModel.stop()
+        UpdateChecker.shared.stop()
     }
 }

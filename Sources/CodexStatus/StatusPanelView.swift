@@ -5,7 +5,9 @@ struct StatusPanelView: View {
     @ObservedObject var model: CodexStatusModel
     @AppStorage(LimitDisplayMode.storageKey) private var limitDisplayModeRaw = LimitDisplayMode.remaining.rawValue
     @AppStorage(MenuBarDisplayVersion.storageKey) private var menuBarDisplayVersionRaw = MenuBarDisplayVersion.version1.rawValue
+    @ObservedObject private var updater = UpdateChecker.shared
     @State private var showSettings = false
+    @State private var showFooterUpToDate = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -124,6 +126,10 @@ struct StatusPanelView: View {
                 }
                 .buttonStyle(.plain)
             }
+
+            SettingsSectionView(title: "UPDATES") {
+                SettingsUpdateRowView(updater: updater)
+            }
         }
     }
 
@@ -187,10 +193,11 @@ struct StatusPanelView: View {
 
             Spacer()
 
-            Text(lastUpdatedText)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
+            if updater.updateAvailable, let latestVersion = updater.latestVersion {
+                UpdateButton(version: latestVersion)
+            } else {
+                footerVersionStatus
+            }
 
             Button {
                 NSApplication.shared.terminate(nil)
@@ -211,9 +218,64 @@ struct StatusPanelView: View {
         .padding(.vertical, 8)
     }
 
+    private var footerVersionStatus: some View {
+        HStack(spacing: 6) {
+            Button {
+                Task { await updater.checkForUpdates(force: true) }
+            } label: {
+                if updater.isChecking {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(width: 14, height: 14)
+                } else {
+                    Image(systemName: "arrow.down.circle")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 14, height: 14)
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(updater.isChecking)
+            .help(updater.isChecking ? "Checking for Updates" : "Check for Updates")
+
+            Text(footerUpdateText)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(footerUpdateColor)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: 112, alignment: .leading)
+        .animation(.easeInOut(duration: 0.18), value: updater.isChecking)
+        .animation(.easeInOut(duration: 0.18), value: updater.lastCheckCompletedAt)
+        .onChange(of: updater.lastCheckCompletedAt) { _ in
+            guard updater.isUpToDate else { return }
+            Task {
+                showFooterUpToDate = true
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                showFooterUpToDate = false
+            }
+        }
+    }
+
+    private var footerUpdateText: String {
+        if updater.isChecking { return "Checking" }
+        if updater.lastError != nil { return "Check failed" }
+        if showFooterUpToDate { return "Up to date" }
+        return "v\(appVersion)"
+    }
+
+    private var footerUpdateColor: Color {
+        if updater.lastError != nil { return .red }
+        if showFooterUpToDate { return .green }
+        return .secondary
+    }
+
     private var lastUpdatedText: String {
         guard let date = model.lastUpdated else { return "Waiting" }
         return "Updated \(date.formatted(date: .omitted, time: .shortened))"
+    }
+
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
     }
 
     private func creditsText(_ credits: CreditsSnapshot?) -> String {
@@ -550,6 +612,93 @@ private struct SettingsInfoRowView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 3)
+    }
+}
+
+private struct SettingsUpdateRowView: View {
+    @ObservedObject var updater: UpdateChecker
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: updateIcon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(updateColor)
+                .frame(width: 20)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(updateTitle)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.primary)
+
+                Text(updateSubtitle)
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 8)
+
+            if updater.updateAvailable, let latestVersion = updater.latestVersion {
+                UpdateButton(version: latestVersion)
+            } else {
+                Button {
+                    Task { await updater.checkForUpdates(force: true) }
+                } label: {
+                    if updater.isChecking {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(width: 18, height: 18)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 18, height: 18)
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(updater.isChecking)
+                .help(updater.isChecking ? "Checking for Updates" : "Check for Updates")
+            }
+        }
+        .padding(.vertical, 3)
+    }
+
+    private var updateTitle: String {
+        if updater.updateAvailable, let latestVersion = updater.latestVersion {
+            return "Update \(latestVersion) Available"
+        }
+        if updater.isChecking { return "Checking for Updates" }
+        if updater.lastError != nil { return "Update Check Failed" }
+        if updater.isUpToDate { return "Up to Date" }
+        return "Version \(updater.currentVersion)"
+    }
+
+    private var updateSubtitle: String {
+        if updater.isDownloading {
+            return "Downloading \(Int(updater.downloadProgress * 100))%"
+        }
+        if let lastError = updater.lastError {
+            return lastError
+        }
+        if updater.isUpToDate {
+            return "Codex Monitor \(updater.currentVersion) is current"
+        }
+        return "GitHub releases are checked conservatively"
+    }
+
+    private var updateIcon: String {
+        if updater.updateAvailable { return "arrow.down.circle.fill" }
+        if updater.lastError != nil { return "exclamationmark.triangle.fill" }
+        if updater.isUpToDate { return "checkmark.circle.fill" }
+        return "arrow.down.circle"
+    }
+
+    private var updateColor: Color {
+        if updater.updateAvailable { return .green }
+        if updater.lastError != nil { return .orange }
+        if updater.isUpToDate { return .green }
+        return .secondary
     }
 }
 

@@ -53,6 +53,7 @@ final class StatusBarController: NSObject {
                 window.makeKey()
             }
             Task { await model.refresh() }
+            Task { await UpdateChecker.shared.checkForUpdates() }
         }
     }
 
