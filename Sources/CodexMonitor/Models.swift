@@ -69,9 +69,9 @@ enum MenuBarDisplayVersion: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .version1:
-            return "V1"
+            return "Small"
         case .version2:
-            return "V2"
+            return "Large"
         }
     }
 

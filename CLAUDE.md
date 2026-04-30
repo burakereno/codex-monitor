@@ -5,8 +5,7 @@ Follow the project rules in `AGENTS.md`.
 Most important: after making any change, always run:
 
 ```sh
-pkill -x CodexStatus || true
+pkill -x CodexMonitor || true
 ./scripts/build-app.sh
-open .build/CodexStatus.app
+open ".build/Codex Monitor.app"
 ```
-

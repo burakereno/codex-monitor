@@ -4,7 +4,7 @@ import SwiftUI
 
 @MainActor
 final class StatusBarController: NSObject {
-    private let model: CodexStatusModel
+    private let model: CodexMonitorModel
     private let statusItem: NSStatusItem
     private let popover = NSPopover()
     private var cancellables = Set<AnyCancellable>()
@@ -14,7 +14,7 @@ final class StatusBarController: NSObject {
         weight: .medium
     )
 
-    init(model: CodexStatusModel) {
+    init(model: CodexMonitorModel) {
         self.model = model
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
@@ -22,11 +22,10 @@ final class StatusBarController: NSObject {
         popover.behavior = .transient
         popover.animates = true
         popover.appearance = NSAppearance(named: .darkAqua)
-        popover.contentSize = NSSize(width: 340, height: 320)
-        popover.contentViewController = VisualEffectHostingController(
-            size: NSSize(width: 340, height: 320),
+        popover.contentSize = NSSize(width: 340, height: 380)
+        popover.contentViewController = NSHostingController(
             rootView: StatusPanelView(model: model)
-                .frame(width: 340, height: 320)
+                .frame(width: 340, height: 380)
         )
 
         if let button = statusItem.button {
@@ -48,8 +47,6 @@ final class StatusBarController: NSObject {
         } else {
             popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
             if let window = popover.contentViewController?.view.window {
-                window.isOpaque = false
-                window.backgroundColor = .clear
                 window.makeKey()
             }
             Task { await model.refresh() }
@@ -231,48 +228,6 @@ final class StatusBarController: NSObject {
             height: symbol.size.height
         )
         symbol.draw(in: rect)
-    }
-}
-
-private final class VisualEffectHostingController<Content: View>: NSViewController {
-    private let size: NSSize
-    private let rootView: Content
-
-    init(size: NSSize, rootView: Content) {
-        self.size = size
-        self.rootView = rootView
-        super.init(nibName: nil, bundle: nil)
-        preferredContentSize = size
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        nil
-    }
-
-    override func loadView() {
-        let effectView = NSVisualEffectView()
-        effectView.frame = NSRect(origin: .zero, size: size)
-        effectView.material = .popover
-        effectView.blendingMode = .behindWindow
-        effectView.state = .active
-
-        let hostingView = NSHostingView(rootView: rootView.background(Color.clear))
-        hostingView.translatesAutoresizingMaskIntoConstraints = false
-        hostingView.wantsLayer = true
-        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
-
-        effectView.addSubview(hostingView)
-        NSLayoutConstraint.activate([
-            effectView.widthAnchor.constraint(equalToConstant: size.width),
-            effectView.heightAnchor.constraint(equalToConstant: size.height),
-            hostingView.leadingAnchor.constraint(equalTo: effectView.leadingAnchor),
-            hostingView.trailingAnchor.constraint(equalTo: effectView.trailingAnchor),
-            hostingView.topAnchor.constraint(equalTo: effectView.topAnchor),
-            hostingView.bottomAnchor.constraint(equalTo: effectView.bottomAnchor)
-        ])
-
-        view = effectView
     }
 }
 

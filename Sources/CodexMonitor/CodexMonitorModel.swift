@@ -1,8 +1,7 @@
-import AppKit
 import Foundation
 
 @MainActor
-final class CodexStatusModel: ObservableObject {
+final class CodexMonitorModel: ObservableObject {
     @Published private(set) var codexSnapshot: RateLimitsSnapshot?
     @Published private(set) var isRefreshing = false
     @Published private(set) var lastUpdated: Date?
@@ -19,7 +18,7 @@ final class CodexStatusModel: ObservableObject {
             await self.refresh()
 
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(30))
+                try? await Task.sleep(for: .seconds(120))
                 await self.refresh()
             }
         }
@@ -43,20 +42,6 @@ final class CodexStatusModel: ObservableObject {
 
     func updateMenuBarTitleForDisplayModeChange() {
         menuBarTitle = title()
-    }
-
-    func openDashboard() {
-        guard let url = URL(string: "https://chatgpt.com/codex/usage") else { return }
-        guard let safariURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Safari") else {
-            NSWorkspace.shared.open(url)
-            return
-        }
-
-        NSWorkspace.shared.open(
-            [url],
-            withApplicationAt: safariURL,
-            configuration: NSWorkspace.OpenConfiguration()
-        )
     }
 
     private func title() -> MenuBarTitle {

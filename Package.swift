@@ -3,17 +3,17 @@
 import PackageDescription
 
 let package = Package(
-    name: "CodexStatus",
+    name: "CodexMonitor",
     platforms: [
-        .macOS(.v13)
+        .macOS(.v14)
     ],
     products: [
-        .executable(name: "CodexStatus", targets: ["CodexStatus"])
+        .executable(name: "CodexMonitor", targets: ["CodexMonitor"])
     ],
     targets: [
         .executableTarget(
-            name: "CodexStatus",
-            path: "Sources/CodexStatus",
+            name: "CodexMonitor",
+            path: "Sources/CodexMonitor",
             resources: [
                 .process("Resources")
             ]

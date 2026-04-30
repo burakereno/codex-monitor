@@ -48,11 +48,12 @@ jobs:
         run: |
           APP_VERSION="${{ steps.version.outputs.short_version }}" \
           APP_BUILD_NUMBER="${{ steps.version.outputs.build_number }}" \
+          BUNDLE_IDENTIFIER="dev.local.CodexMonitor" \
           ./scripts/build-app.sh
 
       - name: Verify Built App Version
         run: |
-          BUILT=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" .build/CodexStatus.app/Contents/Info.plist)
+          BUILT=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" ".build/Codex Monitor.app/Contents/Info.plist")
           EXPECTED="${{ steps.version.outputs.short_version }}"
           if [ "$BUILT" != "$EXPECTED" ]; then
             echo "::error::Built app reports $BUILT but expected $EXPECTED"
@@ -63,7 +64,7 @@ jobs:
       - name: Create DMG
         run: |
           mkdir -p dmg_source
-          cp -R .build/CodexStatus.app dmg_source/
+          cp -R ".build/Codex Monitor.app" dmg_source/
           ln -s /Applications dmg_source/Applications
           hdiutil create -volname "Codex Monitor" -srcfolder dmg_source -ov -format UDZO CodexMonitor.dmg
           rm -rf dmg_source
@@ -85,13 +86,13 @@ jobs:
 
             ### Installation
             1. Download **CodexMonitor.dmg** below
-            2. Open DMG and drag **CodexStatus.app** to Applications
+            2. Open DMG and drag **Codex Monitor.app** to Applications
             3. Run in Terminal if macOS blocks first launch:
             ```bash
-            xattr -cr /Applications/CodexStatus.app
+            xattr -cr "/Applications/Codex Monitor.app"
             ```
-            4. Launch CodexStatus — it will appear in your menu bar
+            4. Launch Codex Monitor — it will appear in your menu bar
 
             ### Requirements
-            - macOS 13.0 or later
+            - macOS 14.0 or later
             - Codex installed and logged in locally

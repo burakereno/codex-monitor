@@ -77,9 +77,9 @@ final class CodexAppServerClient: @unchecked Sendable {
             "method": "initialize",
             "params": [
                 "clientInfo": [
-                    "name": "codex-status",
-                    "title": "Codex Status",
-                    "version": "0.1.0"
+                    "name": "codex-monitor",
+                    "title": "Codex Monitor",
+                    "version": appVersion
                 ],
                 "capabilities": [
                     "experimentalApi": true,
@@ -114,6 +114,10 @@ final class CodexAppServerClient: @unchecked Sendable {
         let data = try JSONSerialization.data(withJSONObject: result)
         let decoded = try decoder.decode(RateLimitsResponse.self, from: data)
         return decoded.rateLimitsByLimitId?["codex"] ?? decoded.rateLimits
+    }
+
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
     }
 
     private func locateCodexBinary() throws -> URL {

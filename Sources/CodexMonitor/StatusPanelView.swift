@@ -2,9 +2,11 @@ import AppKit
 import SwiftUI
 
 struct StatusPanelView: View {
-    @ObservedObject var model: CodexStatusModel
+    @ObservedObject var model: CodexMonitorModel
     @AppStorage(LimitDisplayMode.storageKey) private var limitDisplayModeRaw = LimitDisplayMode.remaining.rawValue
     @AppStorage(MenuBarDisplayVersion.storageKey) private var menuBarDisplayVersionRaw = MenuBarDisplayVersion.version1.rawValue
+    @AppStorage(DockIconPreference.showDockIconKey) private var showDockIcon = false
+    @AppStorage(DockIconPreference.showDockValuesKey) private var showDockValues = false
     @ObservedObject private var updater = UpdateChecker.shared
     @State private var showSettings = false
     @State private var showFooterUpToDate = false
@@ -48,14 +50,19 @@ struct StatusPanelView: View {
 
             footer
         }
-        .frame(width: 340, height: 320)
-        .background(Color.clear)
+        .frame(width: 340, height: 380)
         .preferredColorScheme(.dark)
-        .onChange(of: limitDisplayModeRaw) { _ in
+        .onChange(of: limitDisplayModeRaw) { _, _ in
             model.updateMenuBarTitleForDisplayModeChange()
         }
-        .onChange(of: menuBarDisplayVersionRaw) { _ in
+        .onChange(of: menuBarDisplayVersionRaw) { _, _ in
             model.updateMenuBarTitleForDisplayModeChange()
+        }
+        .onChange(of: showDockIcon) { _, _ in
+            notifyDockSettingsChanged()
+        }
+        .onChange(of: showDockValues) { _, _ in
+            notifyDockSettingsChanged()
         }
     }
 
@@ -72,19 +79,22 @@ struct StatusPanelView: View {
                 statusLabel: nil,
                 displayMode: limitDisplayMode
             ) { snapshot in
-                ProviderInfoRowView(
-                    icon: "creditcard",
-                    title: "Credits",
-                    value: creditsText(snapshot.credits)
-                )
-
-                if let plan = snapshot.planType {
-                    ProviderInfoRowView(
-                        icon: "person.crop.circle",
-                        title: "Plan",
-                        value: plan
+                VStack(spacing: 10) {
+                    ProviderInfoCardView(
+                        icon: "creditcard",
+                        title: "Credits",
+                        value: creditsText(snapshot.credits)
                     )
+
+                    if let plan = snapshot.planType {
+                        ProviderInfoCardView(
+                            icon: "person.crop.circle",
+                            title: "Plan",
+                            value: plan
+                        )
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
@@ -97,6 +107,27 @@ struct StatusPanelView: View {
                     title: "Display",
                     subtitle: "Choose menu bar layout",
                     selection: $menuBarDisplayVersionRaw
+                )
+            }
+
+            SettingsSectionView(title: "DOCK") {
+                SettingsToggleRowView(
+                    icon: "dock.rectangle",
+                    title: "Dock Icon",
+                    subtitle: "Show Codex Monitor in the Dock",
+                    isOn: $showDockIcon
+                )
+
+                Divider()
+                    .opacity(0.35)
+                    .padding(.vertical, 5)
+
+                SettingsToggleRowView(
+                    icon: "number.square",
+                    title: "Values",
+                    subtitle: "Show the 5h value on the Dock icon",
+                    isOn: $showDockValues,
+                    disabled: !showDockIcon
                 )
             }
 
@@ -118,19 +149,6 @@ struct StatusPanelView: View {
                 )
             }
 
-            SettingsSectionView(title: "LINKS") {
-                Button {
-                    model.openDashboard()
-                } label: {
-                    SettingsInfoRowView(
-                        icon: "arrow.up.right.square",
-                        title: "Codex Dashboard",
-                        subtitle: "Open Codex usage page in Safari"
-                    )
-                }
-                .buttonStyle(.plain)
-            }
-
             SettingsAboutCardView(updater: updater)
         }
     }
@@ -143,7 +161,7 @@ struct StatusPanelView: View {
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(.primary)
 
-                Text("Token Monitor")
+                Text("Codex Monitor")
                     .font(.system(size: 14, weight: .bold))
             }
 
@@ -254,7 +272,7 @@ struct StatusPanelView: View {
         .fixedSize(horizontal: true, vertical: false)
         .animation(.easeInOut(duration: 0.18), value: updater.isChecking)
         .animation(.easeInOut(duration: 0.18), value: updater.lastCheckCompletedAt)
-        .onChange(of: updater.lastCheckCompletedAt) { _ in
+        .onChange(of: updater.lastCheckCompletedAt) { _, _ in
             guard updater.isUpToDate else { return }
             Task {
                 showFooterUpToDate = true
@@ -294,6 +312,10 @@ struct StatusPanelView: View {
 
     private var limitDisplayMode: LimitDisplayMode {
         LimitDisplayMode(rawValue: limitDisplayModeRaw) ?? .remaining
+    }
+
+    private func notifyDockSettingsChanged() {
+        NotificationCenter.default.post(name: .codexMonitorDockSettingsChanged, object: nil)
     }
 
 }
@@ -351,6 +373,48 @@ enum LimitDisplayMode: String, CaseIterable, Identifiable {
     }
 }
 
+private struct StatJackCardBackground: ViewModifier {
+    let cornerRadius: CGFloat
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(cardFill)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: cornerRadius)
+                            .stroke(cardHighlight, lineWidth: 0.5)
+                    }
+                    .shadow(color: cardShadow, radius: 8, y: 2)
+            }
+    }
+
+    private var cardFill: Color {
+        if colorScheme == .dark {
+            return Color.black.opacity(0.30)
+        }
+        return Color.black.opacity(0.03)
+    }
+
+    private var cardHighlight: Color {
+        if colorScheme == .dark {
+            return Color.white.opacity(0.07)
+        }
+        return Color.black.opacity(0.045)
+    }
+
+    private var cardShadow: Color {
+        colorScheme == .dark ? Color.black.opacity(0.32) : Color.black.opacity(0.065)
+    }
+}
+
+private extension View {
+    func statJackCardBackground(cornerRadius: CGFloat = 10) -> some View {
+        modifier(StatJackCardBackground(cornerRadius: cornerRadius))
+    }
+}
+
 private struct ProviderUsageSectionView<Accessory: View>: View {
     let provider: TokenProvider
     let snapshot: RateLimitsSnapshot?
@@ -360,7 +424,7 @@ private struct ProviderUsageSectionView<Accessory: View>: View {
     @ViewBuilder let accessory: (RateLimitsSnapshot) -> Accessory
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 7) {
                 ProviderIconView(provider: provider, size: 15)
                     .foregroundStyle(.primary)
@@ -376,7 +440,7 @@ private struct ProviderUsageSectionView<Accessory: View>: View {
             }
 
             if let snapshot {
-                VStack(spacing: 9) {
+                VStack(spacing: 10) {
                     LimitCardView(
                         title: "5h",
                         window: snapshot.primary,
@@ -389,10 +453,6 @@ private struct ProviderUsageSectionView<Accessory: View>: View {
                         showsWeekScale: true,
                         displayMode: displayMode
                     )
-                }
-
-                VStack(spacing: 6) {
-                    Divider().opacity(0.35)
                     accessory(snapshot)
                 }
             } else if let message {
@@ -403,14 +463,7 @@ private struct ProviderUsageSectionView<Accessory: View>: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
-                    .background {
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color.primary.opacity(0.035))
-                    }
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.primary.opacity(0.055), lineWidth: 1)
-                    }
+                    .statJackCardBackground()
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -432,20 +485,35 @@ private struct ProviderUsageSectionView<Accessory: View>: View {
     }
 }
 
-private struct ProviderInfoRowView: View {
+private struct ProviderInfoCardView: View {
     let icon: String
     let title: String
     let value: String
 
     var body: some View {
-        HStack {
-            Label(title, systemImage: icon)
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
             Spacer()
+
             Text(value)
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
-        .font(.system(size: 11))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .statJackCardBackground(cornerRadius: 8)
     }
 }
 
@@ -463,18 +531,10 @@ private struct SettingsSectionView<Content: View>: View {
             VStack(spacing: 0) {
                 content
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.primary.opacity(0.035))
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.primary.opacity(0.055), lineWidth: 1)
-            }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .padding(12)
+        .statJackCardBackground()
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -484,86 +544,7 @@ private struct SettingsPickerRowView: View {
     let title: String
     let subtitle: String
     @Binding var selection: String
-
-    var body: some View {
-        HStack(spacing: 9) {
-            Image(systemName: icon)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 20)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-
-                Text(subtitle)
-                    .font(.system(size: 9.5, weight: .medium))
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 8)
-
-            Picker("", selection: $selection) {
-                ForEach(LimitDisplayMode.allCases) { mode in
-                    Text(mode.title).tag(mode.rawValue)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .controlSize(.small)
-            .frame(width: 136)
-        }
-        .padding(.vertical, 3)
-    }
-}
-
-private struct SettingsMenuBarVersionRowView: View {
-    let icon: String
-    let title: String
-    let subtitle: String
-    @Binding var selection: String
-
-    var body: some View {
-        HStack(spacing: 9) {
-            Image(systemName: icon)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 20)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-
-                Text(subtitle)
-                    .font(.system(size: 9.5, weight: .medium))
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 8)
-
-            Picker("", selection: $selection) {
-                ForEach(MenuBarDisplayVersion.allCases) { version in
-                    Text(version.title).tag(version.rawValue)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .controlSize(.small)
-            .frame(width: 92)
-        }
-        .padding(.vertical, 3)
-    }
-}
-
-private struct SettingsToggleRowView: View {
-    let icon: String
-    let title: String
-    let subtitle: String
-    @Binding var isOn: Bool
+    private let pickerWidth: CGFloat = 136
 
     var body: some View {
         HStack(spacing: 9) {
@@ -581,6 +562,93 @@ private struct SettingsToggleRowView: View {
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Spacer(minLength: 8)
+
+            Picker("", selection: $selection) {
+                ForEach(LimitDisplayMode.allCases) { mode in
+                    Text(mode.title).tag(mode.rawValue)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .controlSize(.small)
+            .fixedSize()
+            .frame(width: pickerWidth, alignment: .trailing)
+        }
+        .padding(.vertical, 3)
+        .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+}
+
+private struct SettingsMenuBarVersionRowView: View {
+    let icon: String
+    let title: String
+    let subtitle: String
+    @Binding var selection: String
+    private let pickerWidth: CGFloat = 136
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 20)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+
+                Text(subtitle)
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Spacer(minLength: 8)
+
+            Picker("", selection: $selection) {
+                ForEach(MenuBarDisplayVersion.allCases) { version in
+                    Text(version.title).tag(version.rawValue)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .controlSize(.small)
+            .fixedSize()
+            .frame(width: pickerWidth, alignment: .trailing)
+        }
+        .padding(.vertical, 3)
+        .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+}
+
+private struct SettingsToggleRowView: View {
+    let icon: String
+    let title: String
+    let subtitle: String
+    @Binding var isOn: Bool
+    var disabled = false
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(disabled ? .tertiary : .secondary)
+                .frame(width: 20)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(disabled ? .tertiary : .primary)
+
+                Text(subtitle)
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
 
             Spacer(minLength: 8)
 
@@ -588,6 +656,7 @@ private struct SettingsToggleRowView: View {
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.small)
+                .disabled(disabled)
         }
         .padding(.vertical, 3)
     }
@@ -842,7 +911,7 @@ private struct LimitCardView: View {
     let displayMode: LimitDisplayMode
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(title)
                     .font(.system(size: 13, weight: .semibold))
@@ -865,16 +934,9 @@ private struct LimitCardView: View {
                 UsageBarView(value: displayMode.barValue(for: window), tint: tintColor)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color.primary.opacity(0.035))
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(Color.primary.opacity(0.055), lineWidth: 1)
-        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 16)
+        .statJackCardBackground()
     }
 
     private var percentText: String {

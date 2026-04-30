@@ -1,7 +1,7 @@
 # Codex Monitor
 
 <p align="center">
-  <img src="Sources/CodexStatus/Resources/codex.svg" alt="Codex Monitor" width="128" height="128">
+  <img src="docs/icon.png" alt="Codex Monitor" width="128" height="128">
 </p>
 
 **Lightweight macOS menu bar Codex usage monitor.** Track 5-hour usage, weekly usage, reset times, and credits at a glance — right from your menu bar.
@@ -17,7 +17,12 @@
 </p>
 
 <p align="center">
-  <sub>macOS 13.0+ · local Codex state only · See <a href="#installation">Installation</a> for first-launch instructions</sub>
+  <sub>macOS 14.0+ · local Codex state only · See <a href="#installation">Installation</a> for first-launch instructions</sub>
+</p>
+
+<p align="center">
+  <img src="docs/screenshot-main.png" alt="Codex Monitor usage popover" width="390">
+  <img src="docs/screenshot-settings.png" alt="Codex Monitor settings popover" width="390">
 </p>
 
 ## Features
@@ -26,7 +31,8 @@
 - **Weekly usage** — weekly quota status and reset time
 - **Credits** — available credit balance when reported by Codex
 - **Menu bar display modes** — compact native status item layouts
-- **Refresh + dashboard** — manual refresh and quick access to the Codex dashboard
+- **Dock controls** — optionally show the Dock icon and 5-hour value badge
+- **Refresh** — manually refresh local Codex usage state
 - **One-click in-app updates** — checks GitHub releases, downloads the latest DMG, and installs it
 - **Local-only reads** — uses `codex app-server --listen stdio://`; it does not start Codex tasks or send prompts to a model
 - **Native macOS** — SwiftUI + AppKit, runs as a menu bar app
@@ -37,23 +43,23 @@
 
 1. Go to the [Releases](../../releases/latest) page
 2. Download **`CodexMonitor.dmg`**
-3. Open the DMG and drag **CodexStatus.app** to your **Applications** folder
+3. Open the DMG and drag **Codex Monitor.app** to your **Applications** folder
 
 ### Important: First Launch (Unsigned App)
 
 Since Codex Monitor is not notarized by Apple, macOS may block it on first launch. To fix this, run the following command in Terminal **once** after installing:
 
 ```bash
-xattr -cr /Applications/CodexStatus.app
+xattr -cr "/Applications/Codex Monitor.app"
 ```
 
-Then double-click CodexStatus to launch it. The app appears in your menu bar and is shown as **Token Monitor**.
+Then double-click Codex Monitor to launch it. The app appears in your menu bar and is shown as **Codex Monitor**.
 
 ## Build from Source
 
 ### Requirements
 
-- macOS 13.0+
+- macOS 14.0+
 - Xcode 16.0+
 - Codex installed and logged in locally
 
@@ -64,7 +70,7 @@ git clone https://github.com/burakereno/codex-monitor.git
 cd codex-monitor
 
 ./scripts/build-app.sh
-open .build/CodexStatus.app
+open ".build/Codex Monitor.app"
 ```
 
 ## Tech Stack

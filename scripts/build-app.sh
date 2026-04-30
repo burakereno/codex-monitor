@@ -2,25 +2,36 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_DIR="$ROOT_DIR/.build/CodexStatus.app"
+APP_DIR="$ROOT_DIR/.build/Codex Monitor.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
-APP_VERSION="${APP_VERSION:-0.1.0}"
-APP_BUILD_NUMBER="${APP_BUILD_NUMBER:-1}"
-MIN_MACOS_VERSION="${MIN_MACOS_VERSION:-13.0}"
+APP_ICON="$ROOT_DIR/Sources/CodexMonitor/Resources/AppIcon.icns"
+LATEST_TAG="$(git tag -l 'v*' --sort=-v:refname | head -1)"
+DEFAULT_APP_VERSION="${LATEST_TAG#v}"
+if [[ -z "$LATEST_TAG" || "$DEFAULT_APP_VERSION" == "$LATEST_TAG" ]]; then
+  DEFAULT_APP_VERSION="0.1.0"
+fi
+DEFAULT_BUILD_NUMBER="$(echo "$DEFAULT_APP_VERSION" | awk -F. '{print $3}')"
+APP_VERSION="${APP_VERSION:-$DEFAULT_APP_VERSION}"
+APP_BUILD_NUMBER="${APP_BUILD_NUMBER:-${DEFAULT_BUILD_NUMBER:-1}}"
+MIN_MACOS_VERSION="${MIN_MACOS_VERSION:-14.0}"
+BUNDLE_IDENTIFIER="${BUNDLE_IDENTIFIER:-dev.local.CodexMonitor.local}"
 
 cd "$ROOT_DIR"
-rm -rf "$ROOT_DIR/.build/release/CodexStatus_CodexStatus.bundle"
+rm -rf "$ROOT_DIR/.build/release/CodexMonitor_CodexMonitor.bundle"
 swift build -c release
 
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
-cp "$ROOT_DIR/.build/release/CodexStatus" "$MACOS_DIR/CodexStatus"
+cp "$ROOT_DIR/.build/release/CodexMonitor" "$MACOS_DIR/CodexMonitor"
 
-RESOURCE_BUNDLE="$ROOT_DIR/.build/release/CodexStatus_CodexStatus.bundle"
+RESOURCE_BUNDLE="$ROOT_DIR/.build/release/CodexMonitor_CodexMonitor.bundle"
 if [[ -d "$RESOURCE_BUNDLE" ]]; then
   cp -R "$RESOURCE_BUNDLE" "$APP_DIR/"
+fi
+if [[ -f "$APP_ICON" ]]; then
+  cp "$APP_ICON" "$RESOURCES_DIR/AppIcon.icns"
 fi
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
@@ -29,13 +40,17 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
   <key>CFBundleExecutable</key>
-  <string>CodexStatus</string>
+  <string>CodexMonitor</string>
   <key>CFBundleIdentifier</key>
-  <string>dev.local.CodexStatus</string>
+  <string>$BUNDLE_IDENTIFIER</string>
   <key>CFBundleName</key>
-  <string>Token Monitor</string>
+  <string>Codex Monitor</string>
   <key>CFBundleDisplayName</key>
-  <string>Token Monitor</string>
+  <string>Codex Monitor</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
+  <key>CFBundleIconName</key>
+  <string>AppIcon</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>

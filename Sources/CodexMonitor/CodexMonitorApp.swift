@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 @main
-struct CodexStatusApp: App {
+struct CodexMonitorApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
@@ -15,16 +15,21 @@ struct CodexStatusApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusController: StatusBarController?
-    private let statusModel = CodexStatusModel()
+    private let statusModel = CodexMonitorModel()
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        DockIconController.shared.settingsChanged()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
         statusController = StatusBarController(model: statusModel)
+        DockIconController.shared.start(model: statusModel)
         statusModel.start()
         UpdateChecker.shared.start()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        DockIconController.shared.stop()
         statusModel.stop()
         UpdateChecker.shared.stop()
     }

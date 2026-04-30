@@ -8,6 +8,7 @@ final class UpdateChecker: ObservableObject {
     private static let owner = "burakereno"
     private static let repo = "codex-monitor"
     private static let assetName = "CodexMonitor.dmg"
+    private static let productionBundleIdentifier = "dev.local.CodexMonitor"
     private static let checkInterval: TimeInterval = 2 * 60 * 60
     private static let minimumManualCheckInterval: TimeInterval = 30 * 60
     private static let minimumVisibleCheckDuration: UInt64 = 500_000_000
@@ -26,6 +27,7 @@ final class UpdateChecker: ObservableObject {
     }
 
     var updateAvailable: Bool {
+        guard isProductionBuild else { return false }
         guard let latestVersion else { return false }
         return Self.compare(latestVersion, isNewerThan: currentVersion)
     }
@@ -36,6 +38,10 @@ final class UpdateChecker: ObservableObject {
 
     private var timer: Timer?
     private var progressObservation: NSKeyValueObservation?
+
+    private var isProductionBuild: Bool {
+        Bundle.main.bundleIdentifier == Self.productionBundleIdentifier
+    }
 
     private init() {}
 
@@ -106,7 +112,12 @@ final class UpdateChecker: ObservableObject {
     }
 
     func downloadAndInstall() {
-        guard let downloadURL, !isDownloading else { return }
+        guard isProductionBuild else {
+            lastError = "Updates are disabled for local builds."
+            return
+        }
+
+        guard let downloadURL, let latestVersion, !isDownloading else { return }
 
         isDownloading = true
         downloadProgress = 0
@@ -144,7 +155,7 @@ final class UpdateChecker: ObservableObject {
 
                 do {
                     try FileManager.default.moveItem(at: tmpURL, to: destination)
-                    self.installUpdate(dmgURL: destination)
+                    self.installUpdate(dmgURL: destination, expectedVersion: latestVersion)
                 } catch {
                     self.lastError = error.localizedDescription
                 }
@@ -159,11 +170,11 @@ final class UpdateChecker: ObservableObject {
         task.resume()
     }
 
-    private func installUpdate(dmgURL: URL) {
+    private func installUpdate(dmgURL: URL, expectedVersion: String) {
         let currentBundle = URL(fileURLWithPath: Bundle.main.bundlePath)
         let targetBundle = currentBundle.path.hasPrefix("/Applications/")
             ? currentBundle
-            : URL(fileURLWithPath: "/Applications/CodexStatus.app")
+            : URL(fileURLWithPath: "/Applications/Codex Monitor.app")
 
         let scriptURL = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("codex-monitor-install-\(UUID().uuidString).sh")
@@ -177,6 +188,8 @@ final class UpdateChecker: ObservableObject {
 
         PARENT_PID="$1"
         DMG="$2"
+        EXPECTED_BUNDLE_ID="$3"
+        EXPECTED_VERSION="$4"
         TARGET="\(targetBundle.path)"
 
         echo "[install] waiting for parent $PARENT_PID to exit"
@@ -195,11 +208,34 @@ final class UpdateChecker: ObservableObject {
         fi
         echo "[install] mount point: $MOUNT_POINT"
 
-        SRC="$MOUNT_POINT/CodexStatus.app"
+        SRC="$MOUNT_POINT/Codex Monitor.app"
         if [ ! -d "$SRC" ]; then
             echo "[install] source app not found at $SRC; aborting"
             /usr/bin/hdiutil detach "$MOUNT_POINT" -quiet -force 2>/dev/null
             /usr/bin/open "$DMG"
+            exit 1
+        fi
+
+        SRC_INFO="$SRC/Contents/Info.plist"
+        SRC_EXEC="$SRC/Contents/MacOS/CodexMonitor"
+        SRC_BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$SRC_INFO" 2>/dev/null || true)
+        SRC_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$SRC_INFO" 2>/dev/null || true)
+
+        if [ "$SRC_BUNDLE_ID" != "$EXPECTED_BUNDLE_ID" ]; then
+            echo "[install] bundle id mismatch: expected $EXPECTED_BUNDLE_ID, got $SRC_BUNDLE_ID"
+            /usr/bin/hdiutil detach "$MOUNT_POINT" -quiet -force 2>/dev/null
+            exit 1
+        fi
+
+        if [ "$SRC_VERSION" != "$EXPECTED_VERSION" ]; then
+            echo "[install] version mismatch: expected $EXPECTED_VERSION, got $SRC_VERSION"
+            /usr/bin/hdiutil detach "$MOUNT_POINT" -quiet -force 2>/dev/null
+            exit 1
+        fi
+
+        if [ ! -x "$SRC_EXEC" ]; then
+            echo "[install] executable not found or not executable: $SRC_EXEC"
+            /usr/bin/hdiutil detach "$MOUNT_POINT" -quiet -force 2>/dev/null
             exit 1
         fi
 
@@ -240,7 +276,7 @@ final class UpdateChecker: ObservableObject {
         let pid = ProcessInfo.processInfo.processIdentifier
         let task = Process()
         task.executableURL = scriptURL
-        task.arguments = ["\(pid)", dmgURL.path]
+        task.arguments = ["\(pid)", dmgURL.path, Self.productionBundleIdentifier, expectedVersion]
 
         do {
             try task.run()

@@ -5,19 +5,19 @@ This project is a native macOS menu bar app built with Swift Package Manager, Sw
 ## Project Commands
 
 - Build debug: `swift build`
-- Run debug: `swift run CodexStatus`
+- Run debug: `swift run CodexMonitor`
 - Build app bundle: `./scripts/build-app.sh`
-- Run app bundle: `open .build/CodexStatus.app`
-- Kill local app: `pkill -x CodexStatus || true`
+- Run app bundle: `open ".build/Codex Monitor.app"`
+- Kill local app: `pkill -x CodexMonitor || true`
 
 ## Required Local Verification Loop
 
 After making any change, always run this sequence before handing off:
 
 ```sh
-pkill -x CodexStatus || true
+pkill -x CodexMonitor || true
 ./scripts/build-app.sh
-open .build/CodexStatus.app
+open ".build/Codex Monitor.app"
 ```
 
 The goal is to verify that the local menu bar app rebuilds and launches after every edit.
@@ -33,4 +33,3 @@ The goal is to verify that the local menu bar app rebuilds and launches after ev
 - Keep the app as native as possible: AppKit status item, SwiftUI popover, system symbols, native controls.
 - The menu bar item should remain compact.
 - The popover should show 5-hour usage, weekly usage, reset times, credits, refresh, dashboard, and quit.
-
