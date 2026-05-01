@@ -33,7 +33,8 @@ final class UpdateChecker: ObservableObject {
     }
 
     var isUpToDate: Bool {
-        latestVersion != nil && !updateAvailable && lastError == nil
+        guard let latestVersion, lastError == nil else { return false }
+        return !Self.compare(latestVersion, isNewerThan: currentVersion)
     }
 
     private var timer: Timer?
@@ -147,7 +148,7 @@ final class UpdateChecker: ObservableObject {
                     appropriateFor: nil,
                     create: true
                 )
-                let fileName = "CodexMonitor-\(self.latestVersion ?? "latest").dmg"
+                let fileName = "CodexMonitor-\(self.latestVersion ?? "latest")-\(UUID().uuidString).dmg"
                 let destination = (downloads ?? FileManager.default.temporaryDirectory)
                     .appendingPathComponent(fileName)
 
@@ -180,6 +181,8 @@ final class UpdateChecker: ObservableObject {
             .appendingPathComponent("codex-monitor-install-\(UUID().uuidString).sh")
         let logURL = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("codex-monitor-install.log")
+        let mountPointURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-monitor-mount-\(UUID().uuidString)")
 
         let script = """
         #!/bin/bash
@@ -191,6 +194,39 @@ final class UpdateChecker: ObservableObject {
         EXPECTED_BUNDLE_ID="$3"
         EXPECTED_VERSION="$4"
         TARGET="\(targetBundle.path)"
+        MOUNT_POINT="\(mountPointURL.path)"
+        TARGET_PARENT="$(/usr/bin/dirname "$TARGET")"
+        STAGED_APP="$TARGET_PARENT/.Codex Monitor.app.update.$$"
+        BACKUP_APP="$TARGET_PARENT/.Codex Monitor.app.previous.$$"
+        MOUNT_ATTACHED=0
+
+        cleanup_mount() {
+            if [ "$MOUNT_ATTACHED" = "1" ]; then
+                /usr/bin/hdiutil detach "$MOUNT_POINT" -quiet -force 2>/dev/null || true
+                MOUNT_ATTACHED=0
+            fi
+            /bin/rmdir "$MOUNT_POINT" 2>/dev/null || true
+        }
+
+        relaunch_existing_app() {
+            if [ -d "$TARGET" ]; then
+                /usr/bin/open "$TARGET" 2>/dev/null || true
+            fi
+        }
+
+        fail() {
+            echo "[install] error: $*"
+            cleanup_mount
+            /bin/rm -rf "$STAGED_APP"
+            if [ ! -d "$TARGET" ] && [ -d "$BACKUP_APP" ]; then
+                /bin/mv "$BACKUP_APP" "$TARGET" 2>/dev/null || true
+            fi
+            relaunch_existing_app
+            if [ -f "$DMG" ]; then
+                /usr/bin/open "$DMG" 2>/dev/null || true
+            fi
+            exit 1
+        }
 
         echo "[install] waiting for parent $PARENT_PID to exit"
         for _ in $(seq 1 50); do
@@ -201,19 +237,14 @@ final class UpdateChecker: ObservableObject {
         sleep 0.5
 
         echo "[install] mounting $DMG"
-        MOUNT_OUT=$(/usr/bin/hdiutil attach -nobrowse -noautoopen -quiet "$DMG" | tail -1)
-        MOUNT_POINT=$(echo "$MOUNT_OUT" | awk -F'\\t' '{print $NF}')
-        if [ -z "$MOUNT_POINT" ] || [ ! -d "$MOUNT_POINT" ]; then
-            MOUNT_POINT="/Volumes/Codex Monitor"
-        fi
+        /bin/mkdir -p "$MOUNT_POINT" || fail "could not create mount point: $MOUNT_POINT"
+        /usr/bin/hdiutil attach -readonly -nobrowse -noautoopen -mountpoint "$MOUNT_POINT" "$DMG" || fail "could not mount DMG"
+        MOUNT_ATTACHED=1
         echo "[install] mount point: $MOUNT_POINT"
 
         SRC="$MOUNT_POINT/Codex Monitor.app"
         if [ ! -d "$SRC" ]; then
-            echo "[install] source app not found at $SRC; aborting"
-            /usr/bin/hdiutil detach "$MOUNT_POINT" -quiet -force 2>/dev/null
-            /usr/bin/open "$DMG"
-            exit 1
+            fail "source app not found at $SRC"
         fi
 
         SRC_INFO="$SRC/Contents/Info.plist"
@@ -222,34 +253,41 @@ final class UpdateChecker: ObservableObject {
         SRC_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$SRC_INFO" 2>/dev/null || true)
 
         if [ "$SRC_BUNDLE_ID" != "$EXPECTED_BUNDLE_ID" ]; then
-            echo "[install] bundle id mismatch: expected $EXPECTED_BUNDLE_ID, got $SRC_BUNDLE_ID"
-            /usr/bin/hdiutil detach "$MOUNT_POINT" -quiet -force 2>/dev/null
-            exit 1
+            fail "bundle id mismatch: expected $EXPECTED_BUNDLE_ID, got $SRC_BUNDLE_ID"
         fi
 
         if [ "$SRC_VERSION" != "$EXPECTED_VERSION" ]; then
-            echo "[install] version mismatch: expected $EXPECTED_VERSION, got $SRC_VERSION"
-            /usr/bin/hdiutil detach "$MOUNT_POINT" -quiet -force 2>/dev/null
-            exit 1
+            fail "version mismatch: expected $EXPECTED_VERSION, got $SRC_VERSION"
         fi
 
         if [ ! -x "$SRC_EXEC" ]; then
-            echo "[install] executable not found or not executable: $SRC_EXEC"
-            /usr/bin/hdiutil detach "$MOUNT_POINT" -quiet -force 2>/dev/null
-            exit 1
+            fail "executable not found or not executable: $SRC_EXEC"
         fi
 
-        echo "[install] removing old app at $TARGET"
-        /bin/rm -rf "$TARGET"
-
-        echo "[install] copying new app"
-        /usr/bin/ditto "$SRC" "$TARGET"
+        echo "[install] staging new app at $STAGED_APP"
+        /bin/rm -rf "$STAGED_APP" "$BACKUP_APP"
+        /usr/bin/ditto "$SRC" "$STAGED_APP" || fail "could not stage new app"
 
         echo "[install] stripping quarantine"
-        /usr/bin/xattr -cr "$TARGET"
+        /usr/bin/xattr -cr "$STAGED_APP" || fail "could not strip quarantine"
+
+        if [ -d "$TARGET" ]; then
+            echo "[install] moving old app to backup"
+            /bin/mv "$TARGET" "$BACKUP_APP" || fail "could not move old app to backup"
+        fi
+
+        echo "[install] installing staged app"
+        if ! /bin/mv "$STAGED_APP" "$TARGET"; then
+            if [ -d "$BACKUP_APP" ]; then
+                /bin/mv "$BACKUP_APP" "$TARGET" 2>/dev/null || true
+            fi
+            fail "could not install staged app"
+        fi
+
+        /bin/rm -rf "$BACKUP_APP"
 
         echo "[install] detaching dmg"
-        /usr/bin/hdiutil detach "$MOUNT_POINT" -quiet -force 2>/dev/null
+        cleanup_mount
 
         echo "[install] removing downloaded dmg"
         rm -f "$DMG"

@@ -7,7 +7,12 @@ CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 APP_ICON="$ROOT_DIR/Sources/CodexMonitor/Resources/AppIcon.icns"
-LATEST_TAG="$(git tag -l 'v*' --sort=-v:refname | head -1)"
+
+cd "$ROOT_DIR"
+
+REMOTE_LATEST_TAG="$(git ls-remote --tags --refs origin 'v*' 2>/dev/null | awk '{ sub("refs/tags/", "", $2); print $2 }' | sort -Vr | head -1)"
+LOCAL_LATEST_TAG="$(git tag -l 'v*' --sort=-v:refname | head -1)"
+LATEST_TAG="${REMOTE_LATEST_TAG:-$LOCAL_LATEST_TAG}"
 DEFAULT_APP_VERSION="${LATEST_TAG#v}"
 if [[ -z "$LATEST_TAG" || "$DEFAULT_APP_VERSION" == "$LATEST_TAG" ]]; then
   DEFAULT_APP_VERSION="0.1.0"
@@ -18,7 +23,6 @@ APP_BUILD_NUMBER="${APP_BUILD_NUMBER:-${DEFAULT_BUILD_NUMBER:-1}}"
 MIN_MACOS_VERSION="${MIN_MACOS_VERSION:-14.0}"
 BUNDLE_IDENTIFIER="${BUNDLE_IDENTIFIER:-dev.local.CodexMonitor.local}"
 
-cd "$ROOT_DIR"
 rm -rf "$ROOT_DIR/.build/release/CodexMonitor_CodexMonitor.bundle"
 swift build -c release
 
