@@ -8,8 +8,12 @@ final class CodexMonitorModel: ObservableObject {
     @Published private(set) var codexMessage: String?
     @Published private(set) var menuBarTitle = MenuBarTitle(displayVersion: .version1, providers: [])
 
-    private let codexClient = CodexAppServerClient()
+    private let codexClient: RateLimitsReading
     private var refreshTask: Task<Void, Never>?
+
+    init(codexClient: RateLimitsReading = CodexAppServerClient()) {
+        self.codexClient = codexClient
+    }
 
     func start() {
         refreshTask?.cancel()
@@ -83,6 +87,7 @@ final class CodexMonitorModel: ObservableObject {
             codexSnapshot = next
             codexMessage = nil
         } catch {
+            codexSnapshot = nil
             codexMessage = error.localizedDescription
         }
     }

@@ -23,7 +23,28 @@ enum CodexAppServerError: LocalizedError {
     }
 }
 
-final class CodexAppServerClient: @unchecked Sendable {
+protocol RateLimitsReading: Sendable {
+    func readRateLimits() async throws -> RateLimitsSnapshot
+}
+
+private final class TimeoutState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var timedOut = false
+
+    var didTimeOut: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return timedOut
+    }
+
+    func markTimedOut() {
+        lock.lock()
+        timedOut = true
+        lock.unlock()
+    }
+}
+
+final class CodexAppServerClient: RateLimitsReading, @unchecked Sendable {
     private let decoder = JSONDecoder()
 
     func readRateLimits() async throws -> RateLimitsSnapshot {
@@ -64,10 +85,10 @@ final class CodexAppServerClient: @unchecked Sendable {
             try? stdin.fileHandleForWriting.close()
         }
 
-        var didTimeOut = false
+        let timeoutState = TimeoutState()
         DispatchQueue.global().asyncAfter(deadline: .now() + 8) {
             if process.isRunning {
-                didTimeOut = true
+                timeoutState.markTimedOut()
                 process.terminate()
             }
         }
@@ -92,7 +113,7 @@ final class CodexAppServerClient: @unchecked Sendable {
             ]
         ], to: stdin.fileHandleForWriting)
 
-        _ = try readJSONLine(from: stdout.fileHandleForReading, matchingId: 1)
+        _ = try readJSONLine(from: stdout.fileHandleForReading, matchingId: 1, timeoutState: timeoutState)
 
         try send(["method": "initialized"], to: stdin.fileHandleForWriting)
         try send([
@@ -101,13 +122,13 @@ final class CodexAppServerClient: @unchecked Sendable {
             "params": NSNull()
         ], to: stdin.fileHandleForWriting)
 
-        let response = try readJSONLine(from: stdout.fileHandleForReading, matchingId: 2)
+        let response = try readJSONLine(from: stdout.fileHandleForReading, matchingId: 2, timeoutState: timeoutState)
         if let error = response["error"] as? [String: Any] {
             throw CodexAppServerError.serverError(String(describing: error))
         }
 
         guard let result = response["result"] else {
-            if didTimeOut { throw CodexAppServerError.timeout }
+            if timeoutState.didTimeOut { throw CodexAppServerError.timeout }
             throw CodexAppServerError.missingRateLimits
         }
 
@@ -145,9 +166,16 @@ final class CodexAppServerClient: @unchecked Sendable {
         handle.write(Data([0x0a]))
     }
 
-    private func readJSONLine(from handle: FileHandle, matchingId expectedId: Int) throws -> [String: Any] {
+    private func readJSONLine(
+        from handle: FileHandle,
+        matchingId expectedId: Int,
+        timeoutState: TimeoutState
+    ) throws -> [String: Any] {
         while true {
             guard let line = readLineData(from: handle) else {
+                if timeoutState.didTimeOut {
+                    throw CodexAppServerError.timeout
+                }
                 throw CodexAppServerError.missingRateLimits
             }
 
