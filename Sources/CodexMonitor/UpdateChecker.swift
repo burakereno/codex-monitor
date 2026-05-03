@@ -47,7 +47,6 @@ final class UpdateChecker: ObservableObject {
     private init() {}
 
     func start() {
-        Task { await checkForUpdates(force: true) }
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: Self.checkInterval, repeats: true) { _ in
             Task { @MainActor in

@@ -7,6 +7,7 @@ struct StatusPanelView: View {
     @AppStorage(MenuBarDisplayVersion.storageKey) private var menuBarDisplayVersionRaw = MenuBarDisplayVersion.version1.rawValue
     @AppStorage(DockIconPreference.showDockIconKey) private var showDockIcon = false
     @AppStorage(DockIconPreference.showDockValuesKey) private var showDockValues = false
+    @ObservedObject private var launchAtLogin = LaunchAtLoginPreference.shared
     @ObservedObject private var updater = UpdateChecker.shared
     @State private var showSettings = false
     @State private var showFooterUpToDate = false
@@ -64,6 +65,9 @@ struct StatusPanelView: View {
         .onChange(of: showDockValues) { _, _ in
             notifyDockSettingsChanged()
         }
+        .onAppear {
+            launchAtLogin.refresh()
+        }
     }
 
     private var content: some View {
@@ -101,6 +105,15 @@ struct StatusPanelView: View {
 
     private var settingsContent: some View {
         VStack(alignment: .leading, spacing: 8) {
+            SettingsSectionView(title: "STARTUP") {
+                SettingsToggleRowView(
+                    icon: "power",
+                    title: "Open at Login",
+                    subtitle: "Open Codex Monitor when you log in",
+                    isOn: $launchAtLogin.isEnabled
+                )
+            }
+
             SettingsSectionView(title: "MENU BAR") {
                 SettingsMenuBarVersionRowView(
                     icon: "menubar.rectangle",
