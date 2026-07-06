@@ -22,6 +22,66 @@ jobs:
         with:
           xcode-version: latest-stable
 
+      - name: Validate Signing Secrets
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          missing=0
+          for name in \
+            MACOS_CERTIFICATE_P12_BASE64 \
+            MACOS_CERTIFICATE_PASSWORD \
+            KEYCHAIN_PASSWORD \
+            APPLE_ID \
+            APPLE_TEAM_ID \
+            APPLE_APP_SPECIFIC_PASSWORD
+          do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing GitHub secret: $name"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "Developer ID signing and notarization secrets are required before publishing a release."
+            exit 1
+          fi
+
+      - name: Import Developer ID Certificate
+        id: signing
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH="$RUNNER_TEMP/developer-id.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+
+          echo "$MACOS_CERTIFICATE_P12_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          SIGNING_IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | awk '/Developer ID Application/ { print $2; exit }')"
+          if [ -z "$SIGNING_IDENTITY" ]; then
+            echo "::error::No Developer ID Application identity found in imported certificate."
+            security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+            exit 1
+          fi
+          echo "identity=$SIGNING_IDENTITY" >> "$GITHUB_OUTPUT"
+
       - name: Auto Version
         id: version
         run: |
@@ -49,6 +109,7 @@ jobs:
           APP_VERSION="${{ steps.version.outputs.short_version }}" \
           APP_BUILD_NUMBER="${{ steps.version.outputs.build_number }}" \
           BUNDLE_IDENTIFIER="dev.local.CodexMonitor" \
+          CODESIGN_IDENTITY="${{ steps.signing.outputs.identity }}" \
           ./scripts/build-app.sh
 
       - name: Verify Built App Version
@@ -59,7 +120,37 @@ jobs:
             echo "::error::Built app reports $BUILT but expected $EXPECTED"
             exit 1
           fi
+          codesign --verify --deep --strict --verbose=2 ".build/Codex Monitor.app"
+          SIGNING_DETAILS="$(codesign -dv --verbose=4 ".build/Codex Monitor.app" 2>&1)"
+          echo "$SIGNING_DETAILS"
+          if echo "$SIGNING_DETAILS" | grep -q "Signature=adhoc"; then
+            echo "::error::Release app is ad-hoc signed; expected Developer ID."
+            exit 1
+          fi
+          if ! echo "$SIGNING_DETAILS" | grep -q "Authority=Developer ID Application"; then
+            echo "::error::Release app is not signed with a Developer ID Application certificate."
+            exit 1
+          fi
+          if ! echo "$SIGNING_DETAILS" | grep -q "runtime"; then
+            echo "::error::Release app is missing hardened runtime."
+            exit 1
+          fi
           echo "Built app version $BUILT matches tag"
+
+      - name: Notarize App
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          ditto -c -k --keepParent ".build/Codex Monitor.app" CodexMonitor.zip
+          xcrun notarytool submit CodexMonitor.zip \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait
+          xcrun stapler staple ".build/Codex Monitor.app"
+          xcrun stapler validate ".build/Codex Monitor.app"
 
       - name: Create DMG
         run: |
@@ -68,6 +159,21 @@ jobs:
           ln -s /Applications dmg_source/Applications
           hdiutil create -volname "Codex Monitor" -srcfolder dmg_source -ov -format UDZO CodexMonitor.dmg
           rm -rf dmg_source
+          codesign --force --sign "${{ steps.signing.outputs.identity }}" --timestamp CodexMonitor.dmg
+
+      - name: Notarize DMG
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          xcrun notarytool submit CodexMonitor.dmg \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait
+          xcrun stapler staple CodexMonitor.dmg
+          xcrun stapler validate CodexMonitor.dmg
 
       - name: Create Tag
         run: |
@@ -87,11 +193,7 @@ jobs:
             ### Installation
             1. Download **CodexMonitor.dmg** below
             2. Open DMG and drag **Codex Monitor.app** to Applications
-            3. Run in Terminal if macOS blocks first launch:
-            ```bash
-            xattr -cr "/Applications/Codex Monitor.app"
-            ```
-            4. Launch Codex Monitor — it will appear in your menu bar
+            3. Launch Codex Monitor — it will appear in your menu bar
 
             ### Requirements
             - macOS 14.0 or later

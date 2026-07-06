@@ -267,9 +267,6 @@ final class UpdateChecker: ObservableObject {
         /bin/rm -rf "$STAGED_APP" "$BACKUP_APP"
         /usr/bin/ditto "$SRC" "$STAGED_APP" || fail "could not stage new app"
 
-        echo "[install] stripping quarantine"
-        /usr/bin/xattr -cr "$STAGED_APP" || fail "could not strip quarantine"
-
         if [ -d "$TARGET" ]; then
             echo "[install] moving old app to backup"
             /bin/mv "$TARGET" "$BACKUP_APP" || fail "could not move old app to backup"

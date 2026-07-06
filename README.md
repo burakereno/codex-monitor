@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <sub>macOS 14.0+ · local Codex state only · See <a href="#installation">Installation</a> for first-launch instructions</sub>
+  <sub>macOS 14.0+ · local Codex state only · Developer ID signed and notarized</sub>
 </p>
 
 <p align="center">
@@ -45,15 +45,7 @@
 2. Download **`CodexMonitor.dmg`**
 3. Open the DMG and drag **Codex Monitor.app** to your **Applications** folder
 
-### Important: First Launch (Unsigned App)
-
-Since Codex Monitor is not notarized by Apple, macOS may block it on first launch. To fix this, run the following command in Terminal **once** after installing:
-
-```bash
-xattr -cr "/Applications/Codex Monitor.app"
-```
-
-Then double-click Codex Monitor to launch it. The app appears in your menu bar and is shown as **Codex Monitor**.
+Double-click Codex Monitor to launch it. The app is Developer ID signed and notarized, and appears in your menu bar as **Codex Monitor**.
 
 ## Build from Source
 

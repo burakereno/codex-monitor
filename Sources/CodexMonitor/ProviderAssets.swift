@@ -37,10 +37,10 @@ enum ProviderIcon {
         }
 
         let image: NSImage
-        if
-            let url = Bundle.module.url(forResource: provider.resourceName, withExtension: "svg"),
-            let loaded = NSImage(contentsOf: url)
-        {
+        let resourceURL = Bundle.main.url(forResource: provider.resourceName, withExtension: "svg")
+            ?? Bundle.module.url(forResource: provider.resourceName, withExtension: "svg")
+
+        if let url = resourceURL, let loaded = NSImage(contentsOf: url) {
             image = loaded
         } else if let fallback = NSImage(systemSymbolName: "gauge.with.dots.needle.50percent", accessibilityDescription: nil) {
             image = fallback

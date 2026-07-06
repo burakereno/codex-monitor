@@ -2,11 +2,14 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+APP_NAME="CodexMonitor"
 APP_DIR="$ROOT_DIR/.build/Codex Monitor.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
-RESOURCES_DIR="$CONTENTS_DIR/Resources"
 APP_ICON="$ROOT_DIR/Sources/CodexMonitor/Resources/AppIcon.icns"
+APP_RESOURCES="$ROOT_DIR/Sources/CodexMonitor/Resources"
+CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
+MIN_MACOS_VERSION="${MIN_MACOS_VERSION:-14.0}"
 
 cd "$ROOT_DIR"
 
@@ -18,24 +21,25 @@ if [[ -z "$LATEST_TAG" || "$DEFAULT_APP_VERSION" == "$LATEST_TAG" ]]; then
   DEFAULT_APP_VERSION="0.1.0"
 fi
 DEFAULT_BUILD_NUMBER="$(echo "$DEFAULT_APP_VERSION" | awk -F. '{print $3}')"
+if [[ -z "$DEFAULT_BUILD_NUMBER" || "$DEFAULT_BUILD_NUMBER" == "0" ]]; then
+  DEFAULT_BUILD_NUMBER="1"
+fi
 APP_VERSION="${APP_VERSION:-$DEFAULT_APP_VERSION}"
 APP_BUILD_NUMBER="${APP_BUILD_NUMBER:-${DEFAULT_BUILD_NUMBER:-1}}"
-MIN_MACOS_VERSION="${MIN_MACOS_VERSION:-14.0}"
 BUNDLE_IDENTIFIER="${BUNDLE_IDENTIFIER:-dev.local.CodexMonitor.local}"
 
-rm -rf "$ROOT_DIR/.build/release/CodexMonitor_CodexMonitor.bundle"
 swift build -c release
 
 rm -rf "$APP_DIR"
-mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
-cp "$ROOT_DIR/.build/release/CodexMonitor" "$MACOS_DIR/CodexMonitor"
+mkdir -p "$MACOS_DIR" "$CONTENTS_DIR/Resources"
+cp "$ROOT_DIR/.build/release/$APP_NAME" "$MACOS_DIR/$APP_NAME"
+chmod +x "$MACOS_DIR/$APP_NAME"
 
-RESOURCE_BUNDLE="$ROOT_DIR/.build/release/CodexMonitor_CodexMonitor.bundle"
-if [[ -d "$RESOURCE_BUNDLE" ]]; then
-  cp -R "$RESOURCE_BUNDLE" "$APP_DIR/"
+if [[ -d "$APP_RESOURCES" ]]; then
+  cp -R "$APP_RESOURCES"/. "$CONTENTS_DIR/Resources/"
 fi
 if [[ -f "$APP_ICON" ]]; then
-  cp "$APP_ICON" "$RESOURCES_DIR/AppIcon.icns"
+  cp "$APP_ICON" "$CONTENTS_DIR/Resources/AppIcon.icns"
 fi
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
@@ -44,7 +48,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
   <key>CFBundleExecutable</key>
-  <string>CodexMonitor</string>
+  <string>$APP_NAME</string>
   <key>CFBundleIdentifier</key>
   <string>$BUNDLE_IDENTIFIER</string>
   <key>CFBundleName</key>
@@ -67,8 +71,16 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSPrincipalClass</key>
+  <string>NSApplication</string>
 </dict>
 </plist>
 PLIST
+
+CODESIGN_ARGS=(--force --deep --options runtime --sign "$CODESIGN_IDENTITY")
+if [[ "$CODESIGN_IDENTITY" != "-" ]]; then
+  CODESIGN_ARGS+=(--timestamp)
+fi
+/usr/bin/codesign "${CODESIGN_ARGS[@]}" "$APP_DIR" >/dev/null
 
 echo "Built $APP_DIR"
