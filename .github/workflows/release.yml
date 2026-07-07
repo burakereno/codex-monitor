@@ -154,11 +154,7 @@ jobs:
 
       - name: Create DMG
         run: |
-          mkdir -p dmg_source
-          cp -R ".build/Codex Monitor.app" dmg_source/
-          ln -s /Applications dmg_source/Applications
-          hdiutil create -volname "Codex Monitor" -srcfolder dmg_source -ov -format UDZO CodexMonitor.dmg
-          rm -rf dmg_source
+          ./scripts/create-dmg.sh ".build/Codex Monitor.app" CodexMonitor.dmg
           codesign --force --sign "${{ steps.signing.outputs.identity }}" --timestamp CodexMonitor.dmg
 
       - name: Notarize DMG
