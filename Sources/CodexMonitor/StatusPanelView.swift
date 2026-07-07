@@ -258,10 +258,10 @@ struct StatusPanelView: View {
     }
 
     private var footerVersionStatus: some View {
-        HStack(spacing: 6) {
-            Button {
-                Task { await updater.checkForUpdates(force: true) }
-            } label: {
+        Button {
+            Task { await updater.checkForUpdates(force: true) }
+        } label: {
+            HStack(spacing: 6) {
                 if updater.isChecking {
                     ProgressView()
                         .controlSize(.small)
@@ -272,17 +272,19 @@ struct StatusPanelView: View {
                         .foregroundStyle(.secondary)
                         .frame(width: 14, height: 14)
                 }
-            }
-            .buttonStyle(.plain)
-            .disabled(updater.isChecking)
-            .help(updater.isChecking ? "Checking for Updates" : "Check for Updates")
 
-            Text(footerUpdateText)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(footerUpdateColor)
-                .lineLimit(1)
+                Text(footerUpdateText)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(footerUpdateColor)
+                    .lineLimit(1)
+            }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .disabled(updater.isChecking)
         .fixedSize(horizontal: true, vertical: false)
+        .help(updater.isChecking ? "Checking for Updates" : "Check for Updates")
+        .accessibilityLabel("Check for Updates")
         .animation(.easeInOut(duration: 0.18), value: updater.isChecking)
         .animation(.easeInOut(duration: 0.18), value: updater.lastCheckCompletedAt)
         .onChange(of: updater.lastCheckCompletedAt) { _, _ in
