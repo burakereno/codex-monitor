@@ -22,10 +22,10 @@ final class StatusBarController: NSObject {
         popover.behavior = .transient
         popover.animates = true
         popover.appearance = NSAppearance(named: .darkAqua)
-        popover.contentSize = NSSize(width: 340, height: 380)
+        popover.contentSize = NSSize(width: StatusPanelLayout.width, height: StatusPanelLayout.height)
         popover.contentViewController = NSHostingController(
             rootView: StatusPanelView(model: model)
-                .frame(width: 340, height: 380)
+                .frame(width: StatusPanelLayout.width, height: StatusPanelLayout.height)
         )
 
         if let button = statusItem.button {
@@ -121,22 +121,40 @@ final class StatusBarController: NSObject {
             .font: MenuBarDisplay.valueFont,
             .foregroundColor: NSColor.black
         ]
+        let resetAttrs: [NSAttributedString.Key: Any] = [
+            .font: MenuBarDisplay.resetFont,
+            .foregroundColor: NSColor.black
+        ]
 
         let primary = providerTitle.primary as NSString
         let separator = "/" as NSString
         let weekly = providerTitle.weekly as NSString
         let textHeight = max(
-            primary.size(withAttributes: valueAttrs).height,
-            weekly.size(withAttributes: valueAttrs).height
+            max(primary.size(withAttributes: valueAttrs).height, weekly.size(withAttributes: valueAttrs).height),
+            resetTextHeight(providerTitle: providerTitle, attributes: resetAttrs)
         )
         let y = floor((canvasHeight - textHeight) / 2)
 
         primary.draw(at: NSPoint(x: valueX, y: y), withAttributes: valueAttrs)
-        let separatorX = valueX + primary.size(withAttributes: valueAttrs).width + 1
+        let primaryEndX = valueX + primary.size(withAttributes: valueAttrs).width
+        let separatorX = drawResetText(
+            providerTitle.primaryReset,
+            x: primaryEndX,
+            y: y,
+            canvasHeight: canvasHeight,
+            attributes: resetAttrs
+        ) + 1
         separator.draw(at: NSPoint(x: separatorX, y: y), withAttributes: labelAttrs)
         let weeklyX = separatorX + separator.size(withAttributes: labelAttrs).width + 1
         weekly.draw(at: NSPoint(x: weeklyX, y: y), withAttributes: valueAttrs)
-        return weeklyX + weekly.size(withAttributes: valueAttrs).width
+        let weeklyEndX = weeklyX + weekly.size(withAttributes: valueAttrs).width
+        return drawResetText(
+            providerTitle.weeklyReset,
+            x: weeklyEndX,
+            y: y,
+            canvasHeight: canvasHeight,
+            attributes: resetAttrs
+        )
     }
 
     private func drawVersion2(
@@ -152,6 +170,10 @@ final class StatusBarController: NSObject {
             .font: MenuBarDisplay.valueFont,
             .foregroundColor: NSColor.black
         ]
+        let resetAttrs: [NSAttributedString.Key: Any] = [
+            .font: MenuBarDisplay.resetFont,
+            .foregroundColor: NSColor.black
+        ]
 
         let primaryLabel = "5h" as NSString
         let primary = providerTitle.primary as NSString
@@ -159,7 +181,10 @@ final class StatusBarController: NSObject {
         let weekly = providerTitle.weekly as NSString
         let textHeight = max(
             max(primaryLabel.size(withAttributes: labelAttrs).height, primary.size(withAttributes: valueAttrs).height),
-            max(weeklyLabel.size(withAttributes: labelAttrs).height, weekly.size(withAttributes: valueAttrs).height)
+            max(
+                max(weeklyLabel.size(withAttributes: labelAttrs).height, weekly.size(withAttributes: valueAttrs).height),
+                resetTextHeight(providerTitle: providerTitle, attributes: resetAttrs)
+            )
         )
         let y = floor((canvasHeight - textHeight) / 2)
 
@@ -167,11 +192,56 @@ final class StatusBarController: NSObject {
         let primaryX = valueX + primaryLabel.size(withAttributes: labelAttrs).width + MenuBarDisplay.labelValueSpacing
         primary.draw(at: NSPoint(x: primaryX, y: y), withAttributes: valueAttrs)
 
-        let weeklyLabelX = primaryX + primary.size(withAttributes: valueAttrs).width + MenuBarDisplay.version2GroupSpacing
+        let primaryEndX = primaryX + primary.size(withAttributes: valueAttrs).width
+        let afterPrimaryResetX = drawResetText(
+            providerTitle.primaryReset,
+            x: primaryEndX,
+            y: y,
+            canvasHeight: canvasHeight,
+            attributes: resetAttrs
+        )
+        let weeklyLabelX = afterPrimaryResetX + MenuBarDisplay.version2GroupSpacing
         weeklyLabel.draw(at: NSPoint(x: weeklyLabelX, y: y), withAttributes: labelAttrs)
         let weeklyX = weeklyLabelX + weeklyLabel.size(withAttributes: labelAttrs).width + MenuBarDisplay.labelValueSpacing
         weekly.draw(at: NSPoint(x: weeklyX, y: y), withAttributes: valueAttrs)
-        return weeklyX + weekly.size(withAttributes: valueAttrs).width
+        let weeklyEndX = weeklyX + weekly.size(withAttributes: valueAttrs).width
+        return drawResetText(
+            providerTitle.weeklyReset,
+            x: weeklyEndX,
+            y: y,
+            canvasHeight: canvasHeight,
+            attributes: resetAttrs
+        )
+    }
+
+    private func drawResetText(
+        _ reset: String?,
+        x: CGFloat,
+        y: CGFloat,
+        canvasHeight: CGFloat,
+        attributes: [NSAttributedString.Key: Any]
+    ) -> CGFloat {
+        guard let reset else { return x }
+
+        let iconX = x + MenuBarDisplay.resetGroupSpacing
+        drawSymbol("arrow.clockwise", x: iconX, canvasHeight: canvasHeight)
+
+        let resetText = reset as NSString
+        let resetX = iconX + MenuBarDisplay.metricIconWidth + MenuBarDisplay.resetIconTextSpacing
+        resetText.draw(at: NSPoint(x: resetX, y: y), withAttributes: attributes)
+        return resetX + resetText.size(withAttributes: attributes).width
+    }
+
+    private func resetTextHeight(
+        providerTitle: MenuBarProviderTitle,
+        attributes: [NSAttributedString.Key: Any]
+    ) -> CGFloat {
+        let heights = [providerTitle.primaryReset, providerTitle.weeklyReset]
+            .compactMap { reset -> CGFloat? in
+                guard let reset else { return nil }
+                return (reset as NSString).size(withAttributes: attributes).height
+            }
+        return heights.max() ?? 0
     }
 
     private func drawProviderIcon(_ provider: TokenProvider, x: CGFloat, canvasHeight: CGFloat) {
@@ -239,6 +309,8 @@ private enum MenuBarDisplay {
     static let version2GroupSpacing: CGFloat = 6
     static let providerSpacing: CGFloat = 8
     static let labelValueSpacing: CGFloat = 3
+    static let resetGroupSpacing: CGFloat = 3
+    static let resetIconTextSpacing: CGFloat = 1
     static let metricIconPointSize: CGFloat = 12
     static let metricTextPointSize: CGFloat = 12
 
@@ -249,6 +321,10 @@ private enum MenuBarDisplay {
     static let valueFont = NSFont.monospacedSystemFont(
         ofSize: metricTextPointSize,
         weight: .bold
+    )
+    static let resetFont = NSFont.monospacedSystemFont(
+        ofSize: metricTextPointSize - 1,
+        weight: .medium
     )
 
     static func contentWidth(for title: MenuBarTitle) -> CGFloat {
@@ -270,23 +346,39 @@ private enum MenuBarDisplay {
     ) -> CGFloat {
         let attrsLabel: [NSAttributedString.Key: Any] = [.font: labelFont]
         let attrsValue: [NSAttributedString.Key: Any] = [.font: valueFont]
+        let attrsReset: [NSAttributedString.Key: Any] = [.font: resetFont]
         let primaryWidth = (provider.primary as NSString).size(withAttributes: attrsValue).width
         let weeklyWidth = (provider.weekly as NSString).size(withAttributes: attrsValue).width
+        let primaryResetWidth = resetWidth(provider.primaryReset, attributes: attrsReset)
+        let weeklyResetWidth = resetWidth(provider.weeklyReset, attributes: attrsReset)
 
         switch displayVersion {
         case .version1:
             let separatorWidth = ("/" as NSString).size(withAttributes: attrsLabel).width
-            return primaryWidth + separatorWidth + weeklyWidth + 2
+            return primaryWidth + primaryResetWidth + separatorWidth + weeklyWidth + weeklyResetWidth + 2
         case .version2:
             let primaryLabelWidth = ("5h" as NSString).size(withAttributes: attrsLabel).width
             let weeklyLabelWidth = ("W" as NSString).size(withAttributes: attrsLabel).width
             return primaryLabelWidth
                 + labelValueSpacing
                 + primaryWidth
+                + primaryResetWidth
                 + version2GroupSpacing
                 + weeklyLabelWidth
                 + labelValueSpacing
                 + weeklyWidth
+                + weeklyResetWidth
         }
+    }
+
+    private static func resetWidth(
+        _ reset: String?,
+        attributes: [NSAttributedString.Key: Any]
+    ) -> CGFloat {
+        guard let reset else { return 0 }
+        return resetGroupSpacing
+            + metricIconWidth
+            + resetIconTextSpacing
+            + (reset as NSString).size(withAttributes: attributes).width
     }
 }

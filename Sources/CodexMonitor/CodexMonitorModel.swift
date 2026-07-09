@@ -6,13 +6,19 @@ final class CodexMonitorModel: ObservableObject {
     @Published private(set) var isRefreshing = false
     @Published private(set) var lastUpdated: Date?
     @Published private(set) var codexMessage: String?
+    @Published private(set) var codexUsageSummary = CodexUsageSummary.empty()
     @Published private(set) var menuBarTitle = MenuBarTitle(displayVersion: .version1, providers: [])
 
     private let codexClient: RateLimitsReading
+    private let codexUsageReader: CodexUsageSummaryReading
     private var refreshTask: Task<Void, Never>?
 
-    init(codexClient: RateLimitsReading = CodexAppServerClient()) {
+    init(
+        codexClient: RateLimitsReading = CodexAppServerClient(),
+        codexUsageReader: CodexUsageSummaryReading = CodexUsageLogReader()
+    ) {
         self.codexClient = codexClient
+        self.codexUsageReader = codexUsageReader
     }
 
     func start() {
@@ -55,7 +61,9 @@ final class CodexMonitorModel: ObservableObject {
             providers.append(MenuBarProviderTitle(
                 provider: .codex,
                 primary: titleValue(for: codexSnapshot.primary),
-                weekly: titleValue(for: codexSnapshot.secondary)
+                weekly: titleValue(for: codexSnapshot.secondary),
+                primaryReset: titleResetValue(for: codexSnapshot.primary),
+                weeklyReset: titleResetValue(for: codexSnapshot.secondary)
             ))
         }
 
@@ -71,6 +79,11 @@ final class CodexMonitorModel: ObservableObject {
         return "\(percent)%"
     }
 
+    private func titleResetValue(for window: RateLimitWindow?) -> String? {
+        guard menuBarShowsResetTimes else { return nil }
+        return window?.compactResetText() ?? "--"
+    }
+
     private var displayMode: LimitDisplayMode {
         let rawValue = UserDefaults.standard.string(forKey: LimitDisplayMode.storageKey)
         return rawValue.flatMap(LimitDisplayMode.init(rawValue:)) ?? .remaining
@@ -81,6 +94,10 @@ final class CodexMonitorModel: ObservableObject {
         return rawValue.flatMap(MenuBarDisplayVersion.init(rawValue:)) ?? .version1
     }
 
+    private var menuBarShowsResetTimes: Bool {
+        MenuBarResetTimePreference.showsResetTimes
+    }
+
     private func refreshCodex() async {
         do {
             let next = try await codexClient.readRateLimits()
@@ -89,6 +106,12 @@ final class CodexMonitorModel: ObservableObject {
         } catch {
             codexSnapshot = nil
             codexMessage = error.localizedDescription
+        }
+
+        do {
+            codexUsageSummary = try await codexUsageReader.readUsageSummary(referenceDate: Date())
+        } catch {
+            codexUsageSummary = .empty()
         }
     }
 
@@ -102,5 +125,21 @@ struct MenuBarTitle: Equatable {
 struct MenuBarProviderTitle: Equatable {
     let provider: TokenProvider
     let primary: String
+    let primaryReset: String?
     let weekly: String
+    let weeklyReset: String?
+
+    init(
+        provider: TokenProvider,
+        primary: String,
+        weekly: String,
+        primaryReset: String? = nil,
+        weeklyReset: String? = nil
+    ) {
+        self.provider = provider
+        self.primary = primary
+        self.primaryReset = primaryReset
+        self.weekly = weekly
+        self.weeklyReset = weeklyReset
+    }
 }

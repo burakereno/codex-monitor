@@ -49,11 +49,11 @@ final class UpdateChecker: ObservableObject {
     func start() {
         timer?.invalidate()
         Task { @MainActor in
-            await UpdateChecker.shared.checkForUpdates(force: true)
+            await UpdateChecker.shared.checkForUpdates(force: false, reportsErrors: false)
         }
         timer = Timer.scheduledTimer(withTimeInterval: Self.checkInterval, repeats: true) { _ in
             Task { @MainActor in
-                await UpdateChecker.shared.checkForUpdates(force: true)
+                await UpdateChecker.shared.checkForUpdates(force: false, reportsErrors: false)
             }
         }
     }
@@ -66,6 +66,10 @@ final class UpdateChecker: ObservableObject {
     }
 
     func checkForUpdates(force: Bool = false) async {
+        await checkForUpdates(force: force, reportsErrors: true)
+    }
+
+    private func checkForUpdates(force: Bool, reportsErrors: Bool) async {
         guard !isChecking else { return }
 
         let now = Date()
@@ -78,10 +82,13 @@ final class UpdateChecker: ObservableObject {
 
         lastCheckedAt = now
         isChecking = true
-        lastError = nil
+        if reportsErrors {
+            lastError = nil
+        }
 
         let url = URL(string: "https://api.github.com/repos/\(Self.owner)/\(Self.repo)/releases/latest")!
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData)
+        request.timeoutInterval = 12
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
         request.setValue("no-cache", forHTTPHeaderField: "Pragma")
@@ -96,14 +103,15 @@ final class UpdateChecker: ObservableObject {
             }
 
             let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
-            let tag = release.tagName.hasPrefix("v")
-                ? String(release.tagName.dropFirst())
-                : release.tagName
+            let releaseInfo = try Self.releaseInfo(from: release)
 
-            latestVersion = tag
-            downloadURL = release.assets.first(where: { $0.name == Self.assetName })?.browserDownloadURL
+            latestVersion = releaseInfo.version
+            downloadURL = releaseInfo.downloadURL
+            lastError = nil
         } catch {
-            lastError = error.localizedDescription
+            if reportsErrors {
+                lastError = error.localizedDescription
+            }
         }
 
         let elapsed = Date().timeIntervalSince(now)
@@ -122,7 +130,12 @@ final class UpdateChecker: ObservableObject {
             return
         }
 
-        guard let downloadURL, let latestVersion, !isDownloading else { return }
+        guard !isDownloading else { return }
+
+        guard let downloadURL, let latestVersion else {
+            lastError = "Update download is unavailable."
+            return
+        }
 
         isDownloading = true
         downloadProgress = 0
@@ -344,6 +357,20 @@ final class UpdateChecker: ObservableObject {
         return false
     }
 
+    static func releaseInfo(from release: GitHubRelease) throws -> UpdateReleaseInfo {
+        let tag = release.tagName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
+        guard !version.isEmpty else {
+            throw UpdateError.missingVersion
+        }
+
+        guard let downloadURL = release.assets.first(where: { $0.name == Self.assetName })?.browserDownloadURL else {
+            throw UpdateError.missingAsset(Self.assetName)
+        }
+
+        return UpdateReleaseInfo(version: version, downloadURL: downloadURL)
+    }
+
     private static func parse(_ value: String) -> [Int] {
         value
             .split(separator: ".")
@@ -351,18 +378,29 @@ final class UpdateChecker: ObservableObject {
     }
 }
 
-private enum UpdateError: LocalizedError {
+enum UpdateError: LocalizedError {
     case badStatus(Int)
+    case missingAsset(String)
+    case missingVersion
 
     var errorDescription: String? {
         switch self {
         case .badStatus(let statusCode):
             return "GitHub returned HTTP \(statusCode)"
+        case .missingAsset(let assetName):
+            return "GitHub release is missing \(assetName)"
+        case .missingVersion:
+            return "GitHub release is missing a version tag"
         }
     }
 }
 
-private struct GitHubRelease: Decodable {
+struct UpdateReleaseInfo: Equatable {
+    let version: String
+    let downloadURL: URL
+}
+
+struct GitHubRelease: Decodable {
     let tagName: String
     let assets: [Asset]
 

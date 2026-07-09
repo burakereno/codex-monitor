@@ -5,6 +5,7 @@ struct StatusPanelView: View {
     @ObservedObject var model: CodexMonitorModel
     @AppStorage(LimitDisplayMode.storageKey) private var limitDisplayModeRaw = LimitDisplayMode.remaining.rawValue
     @AppStorage(MenuBarDisplayVersion.storageKey) private var menuBarDisplayVersionRaw = MenuBarDisplayVersion.version1.rawValue
+    @AppStorage(MenuBarResetTimePreference.storageKey) private var showMenuBarResetTimes = false
     @AppStorage(DockIconPreference.showDockIconKey) private var showDockIcon = false
     @AppStorage(DockIconPreference.showDockValuesKey) private var showDockValues = false
     @ObservedObject private var launchAtLogin = LaunchAtLoginPreference.shared
@@ -51,12 +52,15 @@ struct StatusPanelView: View {
 
             footer
         }
-        .frame(width: 340, height: 380)
+        .frame(width: StatusPanelLayout.width, height: StatusPanelLayout.height)
         .preferredColorScheme(.dark)
         .onChange(of: limitDisplayModeRaw) { _, _ in
             model.updateMenuBarTitleForDisplayModeChange()
         }
         .onChange(of: menuBarDisplayVersionRaw) { _, _ in
+            model.updateMenuBarTitleForDisplayModeChange()
+        }
+        .onChange(of: showMenuBarResetTimes) { _, _ in
             model.updateMenuBarTitleForDisplayModeChange()
         }
         .onChange(of: showDockIcon) { _, _ in
@@ -82,24 +86,16 @@ struct StatusPanelView: View {
                 message: model.codexMessage,
                 statusLabel: nil,
                 displayMode: limitDisplayMode
-            ) { snapshot in
+            ) { _ in
                 VStack(spacing: 10) {
-                    ProviderInfoCardView(
-                        icon: "creditcard",
-                        title: "Credits",
-                        value: creditsText(snapshot.credits)
-                    )
+                    DailyUsageCardView(days: model.codexUsageSummary.dailyUsage)
 
-                    if let plan = snapshot.planType {
-                        ProviderInfoCardView(
-                            icon: "person.crop.circle",
-                            title: "Plan",
-                            value: plan
-                        )
-                    }
+                    TokenUsageCardView(summary: model.codexUsageSummary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+
+            LastUpdatedCardView(text: lastUpdatedText, isRefreshing: model.isRefreshing)
         }
     }
 
@@ -120,6 +116,17 @@ struct StatusPanelView: View {
                     title: "Display",
                     subtitle: "Choose menu bar layout",
                     selection: $menuBarDisplayVersionRaw
+                )
+
+                Divider()
+                    .opacity(0.35)
+                    .padding(.vertical, 5)
+
+                SettingsToggleRowView(
+                    icon: "clock.arrow.circlepath",
+                    title: "Reset Times",
+                    subtitle: "Show reset countdowns in the menu bar",
+                    isOn: $showMenuBarResetTimes
                 )
             }
 
@@ -319,12 +326,6 @@ struct StatusPanelView: View {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
     }
 
-    private func creditsText(_ credits: CreditsSnapshot?) -> String {
-        guard let credits else { return "Unavailable" }
-        if credits.unlimited { return "Unlimited" }
-        return credits.balance ?? (credits.hasCredits ? "Available" : "0")
-    }
-
     private var limitDisplayMode: LimitDisplayMode {
         LimitDisplayMode(rawValue: limitDisplayModeRaw) ?? .remaining
     }
@@ -430,6 +431,23 @@ private extension View {
     }
 }
 
+private func formattedTokenCount(_ value: Int) -> String {
+    let sign = value < 0 ? "-" : ""
+    let absolute = abs(value)
+
+    if absolute >= 1_000_000 {
+        let formatted = Double(absolute) / 1_000_000
+        return "\(sign)\(String(format: formatted >= 10 ? "%.0f" : "%.1f", formatted))M"
+    }
+
+    if absolute >= 1_000 {
+        let formatted = Double(absolute) / 1_000
+        return "\(sign)\(String(format: formatted >= 10 ? "%.0f" : "%.1f", formatted))k"
+    }
+
+    return "\(value)"
+}
+
 private struct ProviderUsageSectionView<Accessory: View>: View {
     let provider: TokenProvider
     let snapshot: RateLimitsSnapshot?
@@ -457,13 +475,15 @@ private struct ProviderUsageSectionView<Accessory: View>: View {
             if let snapshot {
                 VStack(spacing: 10) {
                     LimitCardView(
-                        title: "5h",
+                        icon: "clock",
+                        title: "5-Hour Session",
                         window: snapshot.primary,
                         showsWeekScale: false,
                         displayMode: displayMode
                     )
                     LimitCardView(
-                        title: "Weekly",
+                        icon: "calendar",
+                        title: "Weekly Limit",
                         window: snapshot.secondary,
                         showsWeekScale: true,
                         displayMode: displayMode
@@ -500,34 +520,227 @@ private struct ProviderUsageSectionView<Accessory: View>: View {
     }
 }
 
-private struct ProviderInfoCardView: View {
-    let icon: String
-    let title: String
-    let value: String
+private struct DailyUsageCardView: View {
+    let days: [DailyTokenUsage]
+
+    private var maxTokens: Int {
+        max(days.map(\.totalTokens).max() ?? 0, 1)
+    }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            HStack(spacing: 5) {
-                Image(systemName: icon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 14) {
+            CardHeaderView(
+                icon: "chart.bar",
+                title: "Daily Usage",
+                trailing: "7d"
+            )
 
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+            HStack(alignment: .bottom, spacing: 8) {
+                ForEach(days) { day in
+                    DailyUsageBarView(day: day, maxTokens: maxTokens)
+                }
             }
-
-            Spacer()
-
-            Text(value)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            .frame(height: 66, alignment: .bottom)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 16)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 14)
+        .statJackCardBackground()
+    }
+}
+
+private struct DailyUsageBarView: View {
+    let day: DailyTokenUsage
+    let maxTokens: Int
+
+    private var ratio: Double {
+        guard maxTokens > 0 else { return 0 }
+        return min(max(Double(day.totalTokens) / Double(maxTokens), 0), 1)
+    }
+
+    private var barHeight: CGFloat {
+        day.totalTokens == 0 ? 6 : CGFloat(12 + ratio * 32)
+    }
+
+    var body: some View {
+        VStack(spacing: 7) {
+            RoundedRectangle(cornerRadius: 3)
+                .fill(barColor)
+                .frame(height: barHeight)
+                .frame(maxHeight: 44, alignment: .bottom)
+                .help("\(formattedTokenCount(day.totalTokens)) tokens")
+
+            Text(day.date.formatted(.dateTime.weekday(.abbreviated)))
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+    }
+
+    private var barColor: Color {
+        if day.totalTokens == 0 { return Color.primary.opacity(0.10) }
+        if ratio >= 0.72 { return .orange }
+        return .green
+    }
+}
+
+private struct TokenUsageCardView: View {
+    let summary: CodexUsageSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            CardHeaderView(icon: "number", title: "Token Usage", trailing: nil)
+
+            Grid(alignment: .trailing, horizontalSpacing: 12, verticalSpacing: 6) {
+                GridRow {
+                    Text("")
+                    tokenHeader("Input")
+                    tokenHeader("Output")
+                    tokenHeader("Cache")
+                    tokenHeader("Total")
+                }
+
+                TokenUsageGridRowView(title: "Today", totals: summary.today)
+                TokenUsageGridRowView(title: "This Month", totals: summary.currentMonth)
+            }
+
+            Divider()
+                .opacity(0.35)
+
+            if summary.modelBreakdown.isEmpty {
+                Text("No model usage yet")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("Model Usage")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+
+                    ForEach(summary.modelBreakdown) { usage in
+                        HStack(spacing: 8) {
+                            Text(displayModelName(usage.model))
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.78)
+
+                            Spacer(minLength: 8)
+
+                            Text(formattedTokenCount(usage.totalTokens))
+                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.72)
+
+                            Text("\(usage.percentage)%")
+                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 42, alignment: .trailing)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .statJackCardBackground()
+    }
+
+    private func tokenHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.tertiary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.72)
+    }
+
+    private func displayModelName(_ model: String) -> String {
+        model == "unknown" ? "Unknown model" : model
+    }
+}
+
+private struct TokenUsageGridRowView: View {
+    let title: String
+    let totals: TokenUsageTotals
+
+    var body: some View {
+        GridRow {
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .gridColumnAlignment(.leading)
+
+            tokenValue(totals.inputTokens)
+            tokenValue(totals.outputTokens)
+            tokenValue(totals.cachedInputTokens)
+            tokenValue(totals.totalTokens)
+        }
+    }
+
+    private func tokenValue(_ value: Int) -> some View {
+        Text(formattedTokenCount(value))
+            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+            .foregroundStyle(value == 0 ? .secondary : .primary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+    }
+}
+
+private struct CardHeaderView: View {
+    let icon: String
+    let title: String
+    let trailing: String?
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.green)
+                .frame(width: 15)
+
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+
+            Spacer(minLength: 8)
+
+            if let trailing {
+                Text(trailing)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.green)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background {
+                        Capsule()
+                            .fill(Color.green.opacity(0.12))
+                    }
+            }
+        }
+    }
+}
+
+private struct LastUpdatedCardView: View {
+    let text: String
+    let isRefreshing: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: isRefreshing ? "arrow.triangle.2.circlepath" : "clock")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 14)
+
+            Text(isRefreshing ? "Refreshing Codex" : text)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
         .statJackCardBackground(cornerRadius: 8)
     }
 }
@@ -920,33 +1133,51 @@ private struct EmptyStatusView: View {
 }
 
 private struct LimitCardView: View {
+    let icon: String
     let title: String
     let window: RateLimitWindow?
     let showsWeekScale: Bool
     let displayMode: LimitDisplayMode
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 8) {
+                HStack(spacing: 7) {
+                    Image(systemName: icon)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(tintColor)
+                        .frame(width: 16)
 
-                Spacer()
+                    Text(title)
+                        .font(.system(size: 13, weight: .semibold))
+                }
 
-                Text(percentText)
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
 
-                Text(resetText)
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.secondary)
-                    .frame(minWidth: 82, alignment: .trailing)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(percentText)
+                        .font(.system(size: 15, weight: .bold, design: .monospaced))
+                        .foregroundStyle(tintColor)
+                }
             }
 
             if showsWeekScale {
                 SegmentedUsageBarView(value: displayMode.barValue(for: window), tint: tintColor)
             } else {
                 UsageBarView(value: displayMode.barValue(for: window), tint: tintColor)
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                resetText
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+
+                Spacer(minLength: 8)
+
+                Text(paceText)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(tintColor)
+                    .lineLimit(1)
             }
         }
         .padding(.horizontal, 16)
@@ -959,8 +1190,30 @@ private struct LimitCardView: View {
         return "\(percent)%"
     }
 
-    private var resetText: String {
-        guard let resetDate = window?.resetDate else { return "Reset unavailable" }
+    private var resetText: Text {
+        guard let resetDate = window?.resetDate else {
+            return Text("Resets unavailable")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.secondary)
+        }
+
+        let components = resetTextComponents(for: resetDate)
+
+        return Text("Resets in: ")
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(.secondary)
+        + Text(components.relative)
+            .font(.system(size: 11, weight: .bold))
+            .foregroundColor(.white)
+        + Text(" at ")
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(.secondary)
+        + Text(components.absolute)
+            .font(.system(size: 11, weight: .bold))
+            .foregroundColor(.white)
+    }
+
+    private func resetTextComponents(for resetDate: Date) -> (relative: String, absolute: String) {
         let relativeText = relativeResetText(until: resetDate)
         let absoluteText: String
 
@@ -970,7 +1223,12 @@ private struct LimitCardView: View {
             absoluteText = resetDate.formatted(.dateTime.month(.abbreviated).day())
         }
 
-        return "\(absoluteText) (\(relativeText))"
+        return (relativeText, absoluteText)
+    }
+
+    private var paceText: String {
+        guard let window else { return "Pace: waiting" }
+        return "Pace: \(window.pace.title)"
     }
 
     private func relativeResetText(until resetDate: Date) -> String {
