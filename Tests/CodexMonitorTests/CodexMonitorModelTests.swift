@@ -113,26 +113,23 @@ final class CodexMonitorModelTests: XCTestCase {
         XCTAssertFalse(UpdateChecker.compare("1.0.0", isNewerThan: "1.0.1"))
     }
 
-    func testReleaseInfoNormalizesTagAndFindsDmgAsset() throws {
-        let url = try XCTUnwrap(URL(string: "https://example.com/CodexMonitor.dmg"))
-        let release = GitHubRelease(
-            tagName: "v1.0.8",
-            assets: [
-                .init(name: "CodexMonitor.dmg", browserDownloadURL: url)
-            ]
-        )
+    func testReleaseInfoNormalizesResolvedLatestURL() throws {
+        let url = try XCTUnwrap(URL(string: "https://github.com/burakereno/codex-monitor/releases/tag/v1.0.8"))
 
-        let info = try UpdateChecker.releaseInfo(from: release)
+        let info = try UpdateChecker.releaseInfo(fromResolvedLatestURL: url)
 
         XCTAssertEqual(info.version, "1.0.8")
-        XCTAssertEqual(info.downloadURL, url)
+        XCTAssertEqual(
+            info.downloadURL.absoluteString,
+            "https://github.com/burakereno/codex-monitor/releases/download/v1.0.8/CodexMonitor.dmg"
+        )
     }
 
-    func testReleaseInfoThrowsWhenDmgAssetIsMissing() {
-        let release = GitHubRelease(tagName: "v1.0.8", assets: [])
+    func testReleaseInfoThrowsWhenLatestURLDidNotResolveToTag() throws {
+        let url = try XCTUnwrap(URL(string: "https://github.com/burakereno/codex-monitor/releases/latest"))
 
-        XCTAssertThrowsError(try UpdateChecker.releaseInfo(from: release)) { error in
-            XCTAssertEqual(error.localizedDescription, "GitHub release is missing CodexMonitor.dmg")
+        XCTAssertThrowsError(try UpdateChecker.releaseInfo(fromResolvedLatestURL: url)) { error in
+            XCTAssertEqual(error.localizedDescription, "GitHub release is missing a version tag")
         }
     }
 

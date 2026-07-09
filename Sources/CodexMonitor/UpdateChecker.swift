@@ -66,7 +66,7 @@ final class UpdateChecker: ObservableObject {
     }
 
     func checkForUpdates(force: Bool = false) async {
-        await checkForUpdates(force: force, reportsErrors: true)
+        await checkForUpdates(force: force, reportsErrors: force)
     }
 
     private func checkForUpdates(force: Bool, reportsErrors: Bool) async {
@@ -86,25 +86,8 @@ final class UpdateChecker: ObservableObject {
             lastError = nil
         }
 
-        let url = URL(string: "https://api.github.com/repos/\(Self.owner)/\(Self.repo)/releases/latest")!
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData)
-        request.timeoutInterval = 12
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-        request.setValue("no-cache", forHTTPHeaderField: "Pragma")
-        request.setValue("CodexMonitor-UpdateChecker", forHTTPHeaderField: "User-Agent")
-
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            if let httpResponse = response as? HTTPURLResponse,
-               !(200..<300).contains(httpResponse.statusCode)
-            {
-                throw UpdateError.badStatus(httpResponse.statusCode)
-            }
-
-            let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
-            let releaseInfo = try Self.releaseInfo(from: release)
-
+            let releaseInfo = try await Self.fetchLatestReleaseInfo()
             latestVersion = releaseInfo.version
             downloadURL = releaseInfo.downloadURL
             lastError = nil
@@ -357,18 +340,61 @@ final class UpdateChecker: ObservableObject {
         return false
     }
 
-    static func releaseInfo(from release: GitHubRelease) throws -> UpdateReleaseInfo {
-        let tag = release.tagName.trimmingCharacters(in: .whitespacesAndNewlines)
+    private static func fetchLatestReleaseInfo() async throws -> UpdateReleaseInfo {
+        let latestURL = URL(string: "https://github.com/\(owner)/\(repo)/releases/latest")!
+        var request = URLRequest(url: latestURL, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData)
+        request.httpMethod = "HEAD"
+        request.timeoutInterval = 12
+        request.setValue("text/html", forHTTPHeaderField: "Accept")
+        request.setValue("CodexMonitor-UpdateChecker", forHTTPHeaderField: "User-Agent")
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw UpdateError.badResponse
+        }
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            throw UpdateError.badStatus(httpResponse.statusCode)
+        }
+        guard let resolvedURL = httpResponse.url else {
+            throw UpdateError.missingVersion
+        }
+
+        let releaseInfo = try releaseInfo(fromResolvedLatestURL: resolvedURL)
+        try await validateDownloadURL(releaseInfo.downloadURL)
+        return releaseInfo
+    }
+
+    static func releaseInfo(fromResolvedLatestURL url: URL) throws -> UpdateReleaseInfo {
+        let tag = url.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard tag != "latest" else {
+            throw UpdateError.missingVersion
+        }
+
         let version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
         guard !version.isEmpty else {
             throw UpdateError.missingVersion
         }
 
-        guard let downloadURL = release.assets.first(where: { $0.name == Self.assetName })?.browserDownloadURL else {
-            throw UpdateError.missingAsset(Self.assetName)
-        }
-
+        let downloadURL = URL(string: "https://github.com/\(owner)/\(repo)/releases/download/\(tag)/\(assetName)")!
         return UpdateReleaseInfo(version: version, downloadURL: downloadURL)
+    }
+
+    private static func validateDownloadURL(_ url: URL) async throws {
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData)
+        request.httpMethod = "HEAD"
+        request.timeoutInterval = 12
+        request.setValue("CodexMonitor-UpdateChecker", forHTTPHeaderField: "User-Agent")
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw UpdateError.badResponse
+        }
+        if httpResponse.statusCode == 404 {
+            throw UpdateError.missingAsset(assetName)
+        }
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            throw UpdateError.badStatus(httpResponse.statusCode)
+        }
     }
 
     private static func parse(_ value: String) -> [Int] {
@@ -379,12 +405,15 @@ final class UpdateChecker: ObservableObject {
 }
 
 enum UpdateError: LocalizedError {
+    case badResponse
     case badStatus(Int)
     case missingAsset(String)
     case missingVersion
 
     var errorDescription: String? {
         switch self {
+        case .badResponse:
+            return "GitHub returned an invalid response"
         case .badStatus(let statusCode):
             return "GitHub returned HTTP \(statusCode)"
         case .missingAsset(let assetName):
@@ -398,24 +427,4 @@ enum UpdateError: LocalizedError {
 struct UpdateReleaseInfo: Equatable {
     let version: String
     let downloadURL: URL
-}
-
-struct GitHubRelease: Decodable {
-    let tagName: String
-    let assets: [Asset]
-
-    struct Asset: Decodable {
-        let name: String
-        let browserDownloadURL: URL
-
-        enum CodingKeys: String, CodingKey {
-            case name
-            case browserDownloadURL = "browser_download_url"
-        }
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case tagName = "tag_name"
-        case assets
-    }
 }
