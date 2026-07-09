@@ -1,4 +1,5 @@
 .DS_Store
+.agents/
 .build/
 *.dmg
 DerivedData/
