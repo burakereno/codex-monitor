@@ -86,7 +86,7 @@ struct StatusPanelView: View {
                 message: model.codexMessage,
                 statusLabel: nil,
                 displayMode: limitDisplayMode
-            ) { _ in
+            ) {
                 VStack(spacing: 10) {
                     DailyUsageCardView(days: model.codexUsageSummary.dailyUsage)
 
@@ -454,7 +454,7 @@ private struct ProviderUsageSectionView<Accessory: View>: View {
     let message: String?
     let statusLabel: String?
     let displayMode: LimitDisplayMode
-    @ViewBuilder let accessory: (RateLimitsSnapshot) -> Accessory
+    @ViewBuilder let accessory: () -> Accessory
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -488,7 +488,6 @@ private struct ProviderUsageSectionView<Accessory: View>: View {
                         showsWeekScale: true,
                         displayMode: displayMode
                     )
-                    accessory(snapshot)
                 }
             } else if let message {
                 Text(message)
@@ -500,6 +499,8 @@ private struct ProviderUsageSectionView<Accessory: View>: View {
                     .padding(.vertical, 8)
                     .statJackCardBackground()
             }
+
+            accessory()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

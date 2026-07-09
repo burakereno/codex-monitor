@@ -133,6 +133,31 @@ final class CodexMonitorModelTests: XCTestCase {
         }
     }
 
+    func testBinaryLocatorFindsCodexInsideResolvedApplicationBundle() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CodexBinaryLocatorTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let appURL = rootURL.appendingPathComponent("ChatGPT.app")
+        let binaryURL = appURL.appendingPathComponent("Contents/Resources/codex")
+        try FileManager.default.createDirectory(
+            at: binaryURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        XCTAssertTrue(FileManager.default.createFile(atPath: binaryURL.path, contents: Data()))
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: binaryURL.path
+        )
+
+        let locator = CodexBinaryLocator(
+            applicationURLProvider: { appURL },
+            fallbackPaths: []
+        )
+
+        XCTAssertEqual(try locator.locate(), binaryURL)
+    }
+
     private static func snapshot(
         usedPercent: Int,
         primaryResetsAt: Int? = nil,

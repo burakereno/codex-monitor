@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 enum CodexAppServerError: LocalizedError {
@@ -20,6 +21,46 @@ enum CodexAppServerError: LocalizedError {
         case .serverError(let message):
             return message
         }
+    }
+}
+
+struct CodexBinaryLocator: @unchecked Sendable {
+    private let fileManager: FileManager
+    private let applicationURLProvider: () -> URL?
+    private let fallbackPaths: [String]
+
+    init(
+        fileManager: FileManager = .default,
+        applicationURLProvider: @escaping () -> URL? = {
+            NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.openai.codex")
+        },
+        fallbackPaths: [String] = [
+            "/Applications/ChatGPT.app/Contents/Resources/codex",
+            "/Applications/Codex.app/Contents/Resources/codex",
+            "/opt/homebrew/bin/codex",
+            "/usr/local/bin/codex",
+            "/usr/bin/codex"
+        ]
+    ) {
+        self.fileManager = fileManager
+        self.applicationURLProvider = applicationURLProvider
+        self.fallbackPaths = fallbackPaths
+    }
+
+    func locate() throws -> URL {
+        var candidates: [URL] = []
+
+        if let applicationURL = applicationURLProvider() {
+            candidates.append(applicationURL.appendingPathComponent("Contents/Resources/codex"))
+        }
+
+        candidates.append(contentsOf: fallbackPaths.map { URL(fileURLWithPath: $0) })
+
+        for candidate in candidates where fileManager.isExecutableFile(atPath: candidate.path) {
+            return candidate
+        }
+
+        throw CodexAppServerError.codexBinaryNotFound
     }
 }
 
@@ -46,6 +87,11 @@ private final class TimeoutState: @unchecked Sendable {
 
 final class CodexAppServerClient: RateLimitsReading, @unchecked Sendable {
     private let decoder = JSONDecoder()
+    private let binaryLocator: CodexBinaryLocator
+
+    init(binaryLocator: CodexBinaryLocator = CodexBinaryLocator()) {
+        self.binaryLocator = binaryLocator
+    }
 
     func readRateLimits() async throws -> RateLimitsSnapshot {
         try await withCheckedThrowingContinuation { continuation in
@@ -60,7 +106,7 @@ final class CodexAppServerClient: RateLimitsReading, @unchecked Sendable {
     }
 
     private func readRateLimitsSync() throws -> RateLimitsSnapshot {
-        let codexURL = try locateCodexBinary()
+        let codexURL = try binaryLocator.locate()
         let process = Process()
         let stdin = Pipe()
         let stdout = Pipe()
@@ -139,25 +185,6 @@ final class CodexAppServerClient: RateLimitsReading, @unchecked Sendable {
 
     private var appVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
-    }
-
-    private func locateCodexBinary() throws -> URL {
-        let bundled = URL(fileURLWithPath: "/Applications/Codex.app/Contents/Resources/codex")
-        if FileManager.default.isExecutableFile(atPath: bundled.path) {
-            return bundled
-        }
-
-        let commonPaths = [
-            "/opt/homebrew/bin/codex",
-            "/usr/local/bin/codex",
-            "/usr/bin/codex"
-        ]
-
-        for path in commonPaths where FileManager.default.isExecutableFile(atPath: path) {
-            return URL(fileURLWithPath: path)
-        }
-
-        throw CodexAppServerError.codexBinaryNotFound
     }
 
     private func send(_ object: [String: Any], to handle: FileHandle) throws {
