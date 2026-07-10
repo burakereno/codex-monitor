@@ -3,18 +3,19 @@ import Foundation
 @MainActor
 final class CodexMonitorModel: ObservableObject {
     @Published private(set) var codexSnapshot: RateLimitsSnapshot?
+    @Published private(set) var rateLimitResetCredits: RateLimitResetCreditsSummary?
     @Published private(set) var isRefreshing = false
     @Published private(set) var lastUpdated: Date?
     @Published private(set) var codexMessage: String?
     @Published private(set) var codexUsageSummary = CodexUsageSummary.empty()
     @Published private(set) var menuBarTitle = MenuBarTitle(displayVersion: .version1, providers: [])
 
-    private let codexClient: RateLimitsReading
+    private let codexClient: CodexAccountReading
     private let codexUsageReader: CodexUsageSummaryReading
     private var refreshTask: Task<Void, Never>?
 
     init(
-        codexClient: RateLimitsReading = CodexAppServerClient(),
+        codexClient: CodexAccountReading = CodexAppServerClient(),
         codexUsageReader: CodexUsageSummaryReading = CodexUsageLogReader()
     ) {
         self.codexClient = codexClient
@@ -101,10 +102,12 @@ final class CodexMonitorModel: ObservableObject {
     private func refreshCodex() async {
         do {
             let next = try await codexClient.readRateLimits()
-            codexSnapshot = next
+            codexSnapshot = next.rateLimits
+            rateLimitResetCredits = next.rateLimitResetCredits
             codexMessage = nil
         } catch {
             codexSnapshot = nil
+            rateLimitResetCredits = nil
             codexMessage = error.localizedDescription
         }
 

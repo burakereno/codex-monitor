@@ -88,6 +88,10 @@ struct StatusPanelView: View {
                 displayMode: limitDisplayMode
             ) {
                 VStack(spacing: 10) {
+                    if let resetCredits = model.rateLimitResetCredits {
+                        RateLimitResetCreditsCardView(summary: resetCredits)
+                    }
+
                     DailyUsageCardView(days: model.codexUsageSummary.dailyUsage)
 
                     TokenUsageCardView(summary: model.codexUsageSummary)
@@ -518,6 +522,100 @@ private struct ProviderUsageSectionView<Accessory: View>: View {
         default:
             return .secondary
         }
+    }
+}
+
+private struct RateLimitResetCreditsCardView: View {
+    let summary: RateLimitResetCreditsSummary
+
+    private var credits: [RateLimitResetCredit] {
+        summary.credits ?? []
+    }
+
+    private var availabilityText: String {
+        "\(summary.availableCount) available"
+    }
+
+    private var emptyText: String {
+        if summary.availableCount == 0 {
+            return "No resets available"
+        }
+        return "Reset details are currently unavailable"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            CardHeaderView(
+                icon: "arrow.counterclockwise.circle",
+                title: "Usage Limit Resets",
+                trailing: availabilityText
+            )
+
+            if credits.isEmpty {
+                Text(emptyText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(credits) { credit in
+                        RateLimitResetCreditRowView(credit: credit)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 8)
+        .statJackCardBackground()
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Usage limit resets")
+    }
+}
+
+private struct RateLimitResetCreditRowView: View {
+    let credit: RateLimitResetCredit
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Divider()
+                .opacity(0.35)
+
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "arrow.counterclockwise.circle.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.green)
+                    .frame(width: 16)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(credit.title ?? "Codex usage reset")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+
+                    expirationText
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.vertical, 8)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var expirationText: Text {
+        guard let expirationDate = credit.expirationDate else {
+            return Text("No expiration date")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.secondary)
+        }
+
+        return Text("Expires ")
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(.secondary)
+        + Text(expirationDate, format: .dateTime.month().day())
+            .font(.system(size: 11, weight: .bold))
+            .foregroundColor(.white)
     }
 }
 

@@ -3,6 +3,12 @@ import Foundation
 struct RateLimitsResponse: Decodable {
     let rateLimits: RateLimitsSnapshot
     let rateLimitsByLimitId: [String: RateLimitsSnapshot]?
+    let rateLimitResetCredits: RateLimitResetCreditsSummary?
+}
+
+struct CodexAccountSnapshot {
+    let rateLimits: RateLimitsSnapshot
+    let rateLimitResetCredits: RateLimitResetCreditsSummary?
 }
 
 struct RateLimitsSnapshot: Decodable {
@@ -25,6 +31,25 @@ struct CreditsSnapshot: Decodable {
     let balance: String?
     let hasCredits: Bool
     let unlimited: Bool
+}
+
+struct RateLimitResetCreditsSummary: Decodable, Equatable {
+    let availableCount: Int
+    let credits: [RateLimitResetCredit]?
+}
+
+struct RateLimitResetCredit: Decodable, Equatable, Identifiable {
+    let id: String
+    let title: String?
+    let description: String?
+    let resetType: String
+    let status: String
+    let grantedAt: Int
+    let expiresAt: Int?
+
+    var expirationDate: Date? {
+        expiresAt.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+    }
 }
 
 struct CodexUsageSummary: Equatable {

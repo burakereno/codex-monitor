@@ -18,8 +18,12 @@ final class CodexMonitorModelTests: XCTestCase {
     }
 
     func testRefreshClearsSnapshotAndShowsMessageAfterFailure() async {
+        let resetCredits = RateLimitResetCreditsSummary(availableCount: 3, credits: nil)
         let reader = MockRateLimitsReader(results: [
-            .success(Self.snapshot(usedPercent: 25)),
+            .success(Self.accountSnapshot(
+                usedPercent: 25,
+                rateLimitResetCredits: resetCredits
+            )),
             .failure(CodexAppServerError.timeout)
         ])
         let model = CodexMonitorModel(codexClient: reader, codexUsageReader: MockUsageSummaryReader())
@@ -27,12 +31,14 @@ final class CodexMonitorModelTests: XCTestCase {
         await model.refresh()
 
         XCTAssertNotNil(model.codexSnapshot)
+        XCTAssertEqual(model.rateLimitResetCredits, resetCredits)
         XCTAssertNil(model.codexMessage)
         XCTAssertEqual(model.menuBarTitle.providers.first?.primary, "75%")
 
         await model.refresh()
 
         XCTAssertNil(model.codexSnapshot)
+        XCTAssertNil(model.rateLimitResetCredits)
         XCTAssertEqual(model.codexMessage, CodexAppServerError.timeout.localizedDescription)
         XCTAssertEqual(model.menuBarTitle.providers.first?.primary, "--")
         XCTAssertEqual(model.menuBarTitle.providers.first?.weekly, "--")
@@ -77,7 +83,7 @@ final class CodexMonitorModelTests: XCTestCase {
         let now = Date()
         UserDefaults.standard.set(true, forKey: MenuBarResetTimePreference.storageKey)
         let reader = MockRateLimitsReader(results: [
-            .success(Self.snapshot(
+            .success(Self.accountSnapshot(
                 usedPercent: 25,
                 primaryResetsAt: Int(now.addingTimeInterval(90 * 60).timeIntervalSince1970),
                 secondaryResetsAt: Int(now.addingTimeInterval(3 * 24 * 60 * 60).timeIntervalSince1970)
@@ -93,7 +99,7 @@ final class CodexMonitorModelTests: XCTestCase {
 
     func testRefreshUpdatesUsageSummary() async {
         let reader = MockRateLimitsReader(results: [
-            .success(Self.snapshot(usedPercent: 25))
+            .success(Self.accountSnapshot(usedPercent: 25))
         ])
         let usageSummary = Self.usageSummary(totalTokens: 42)
         let model = CodexMonitorModel(
@@ -104,6 +110,21 @@ final class CodexMonitorModelTests: XCTestCase {
         await model.refresh()
 
         XCTAssertEqual(model.codexUsageSummary.today.totalTokens, 42)
+    }
+
+    func testRefreshPublishesResetCredits() async {
+        let summary = RateLimitResetCreditsSummary(availableCount: 3, credits: nil)
+        let reader = MockRateLimitsReader(results: [
+            .success(CodexAccountSnapshot(
+                rateLimits: Self.snapshot(usedPercent: 25),
+                rateLimitResetCredits: summary
+            ))
+        ])
+        let model = CodexMonitorModel(codexClient: reader, codexUsageReader: MockUsageSummaryReader())
+
+        await model.refresh()
+
+        XCTAssertEqual(model.rateLimitResetCredits, summary)
     }
 
     func testVersionComparisonHandlesDifferentSegmentCounts() {
@@ -131,6 +152,37 @@ final class CodexMonitorModelTests: XCTestCase {
         XCTAssertThrowsError(try UpdateChecker.releaseInfo(fromResolvedLatestURL: url)) { error in
             XCTAssertEqual(error.localizedDescription, "GitHub release is missing a version tag")
         }
+    }
+
+    func testRateLimitsResponseDecodesResetCredits() throws {
+        let data = Data(
+            """
+            {
+              "rateLimits": {},
+              "rateLimitResetCredits": {
+                "availableCount": 3,
+                "credits": [{
+                  "id": "reset-1",
+                  "title": "Full reset (Weekly + 5 hr)",
+                  "description": "Promotional reset",
+                  "resetType": "codexRateLimits",
+                  "status": "available",
+                  "grantedAt": 1783730493,
+                  "expiresAt": 1784335293
+                }]
+              }
+            }
+            """.utf8
+        )
+
+        let response = try JSONDecoder().decode(RateLimitsResponse.self, from: data)
+
+        XCTAssertEqual(response.rateLimitResetCredits?.availableCount, 3)
+        XCTAssertEqual(response.rateLimitResetCredits?.credits?.first?.id, "reset-1")
+        XCTAssertEqual(
+            response.rateLimitResetCredits?.credits?.first?.expirationDate,
+            Date(timeIntervalSince1970: 1_784_335_293)
+        )
     }
 
     func testBinaryLocatorFindsCodexInsideResolvedApplicationBundle() throws {
@@ -174,6 +226,22 @@ final class CodexMonitorModelTests: XCTestCase {
         )
     }
 
+    private static func accountSnapshot(
+        usedPercent: Int,
+        primaryResetsAt: Int? = nil,
+        secondaryResetsAt: Int? = nil,
+        rateLimitResetCredits: RateLimitResetCreditsSummary? = nil
+    ) -> CodexAccountSnapshot {
+        CodexAccountSnapshot(
+            rateLimits: snapshot(
+                usedPercent: usedPercent,
+                primaryResetsAt: primaryResetsAt,
+                secondaryResetsAt: secondaryResetsAt
+            ),
+            rateLimitResetCredits: rateLimitResetCredits
+        )
+    }
+
     private static func usageSummary(totalTokens: Int) -> CodexUsageSummary {
         CodexUsageSummary(
             dailyUsage: CodexUsageSummary.empty().dailyUsage,
@@ -190,15 +258,15 @@ final class CodexMonitorModelTests: XCTestCase {
     }
 }
 
-private actor MockRateLimitsReader: RateLimitsReading {
-    private var results: [Result<RateLimitsSnapshot, Error>]
+private actor MockRateLimitsReader: CodexAccountReading {
+    private var results: [Result<CodexAccountSnapshot, Error>]
 
-    init(results: [Result<RateLimitsSnapshot, Error>]) {
+    init(results: [Result<CodexAccountSnapshot, Error>]) {
         self.results = results
     }
 
-    func readRateLimits() async throws -> RateLimitsSnapshot {
-        let result = results.isEmpty ? Result<RateLimitsSnapshot, Error>.failure(CodexAppServerError.missingRateLimits) : results.removeFirst()
+    func readRateLimits() async throws -> CodexAccountSnapshot {
+        let result = results.isEmpty ? Result<CodexAccountSnapshot, Error>.failure(CodexAppServerError.missingRateLimits) : results.removeFirst()
         return try result.get()
     }
 }

@@ -64,8 +64,8 @@ struct CodexBinaryLocator: @unchecked Sendable {
     }
 }
 
-protocol RateLimitsReading: Sendable {
-    func readRateLimits() async throws -> RateLimitsSnapshot
+protocol CodexAccountReading: Sendable {
+    func readRateLimits() async throws -> CodexAccountSnapshot
 }
 
 private final class TimeoutState: @unchecked Sendable {
@@ -85,7 +85,7 @@ private final class TimeoutState: @unchecked Sendable {
     }
 }
 
-final class CodexAppServerClient: RateLimitsReading, @unchecked Sendable {
+final class CodexAppServerClient: CodexAccountReading, @unchecked Sendable {
     private let decoder = JSONDecoder()
     private let binaryLocator: CodexBinaryLocator
 
@@ -93,7 +93,7 @@ final class CodexAppServerClient: RateLimitsReading, @unchecked Sendable {
         self.binaryLocator = binaryLocator
     }
 
-    func readRateLimits() async throws -> RateLimitsSnapshot {
+    func readRateLimits() async throws -> CodexAccountSnapshot {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
                 do {
@@ -105,7 +105,7 @@ final class CodexAppServerClient: RateLimitsReading, @unchecked Sendable {
         }
     }
 
-    private func readRateLimitsSync() throws -> RateLimitsSnapshot {
+    private func readRateLimitsSync() throws -> CodexAccountSnapshot {
         let codexURL = try binaryLocator.locate()
         let process = Process()
         let stdin = Pipe()
@@ -180,7 +180,11 @@ final class CodexAppServerClient: RateLimitsReading, @unchecked Sendable {
 
         let data = try JSONSerialization.data(withJSONObject: result)
         let decoded = try decoder.decode(RateLimitsResponse.self, from: data)
-        return decoded.rateLimitsByLimitId?["codex"] ?? decoded.rateLimits
+        let rateLimits = decoded.rateLimitsByLimitId?["codex"] ?? decoded.rateLimits
+        return CodexAccountSnapshot(
+            rateLimits: rateLimits,
+            rateLimitResetCredits: decoded.rateLimitResetCredits
+        )
     }
 
     private var appVersion: String {
