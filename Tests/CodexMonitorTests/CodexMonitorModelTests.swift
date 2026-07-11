@@ -130,6 +130,145 @@ final class CodexMonitorModelTests: XCTestCase {
         await refreshTask.value
     }
 
+    func testRefreshUpdatesRateLimitsWhileUsageSummaryIsAlreadyLoading() async {
+        let usageReadStarted = expectation(description: "Usage summary read started")
+        let usageReader = SuspendedUsageSummaryReader(started: usageReadStarted)
+        let reader = MockRateLimitsReader(results: [
+            .success(Self.accountSnapshot(usedPercent: 25)),
+            .success(Self.accountSnapshot(usedPercent: 89))
+        ])
+        let model = CodexMonitorModel(codexClient: reader, codexUsageReader: usageReader)
+
+        let initialRefresh = Task { await model.refresh() }
+        await fulfillment(of: [usageReadStarted], timeout: 1)
+
+        await model.refresh()
+
+        XCTAssertEqual(model.codexSnapshot?.primary?.remainingPercent, 11)
+        XCTAssertEqual(model.menuBarTitle.providers.first?.primary, "11%")
+
+        usageReader.finish()
+        await initialRefresh.value
+    }
+
+    func testRefreshConfirmsTransientUsageRecoveryBeforePublishingIt() async {
+        let now = Int(Date().timeIntervalSince1970)
+        let reader = MockRateLimitsReader(results: [
+            .success(Self.accountSnapshot(
+                usedPercent: 50,
+                secondaryUsedPercent: 28,
+                primaryResetsAt: now + 60 * 60,
+                secondaryResetsAt: now + 6 * 24 * 60 * 60
+            )),
+            .success(Self.accountSnapshot(
+                usedPercent: 0,
+                secondaryUsedPercent: 1,
+                primaryResetsAt: now + 4 * 60 * 60,
+                secondaryResetsAt: now + 6 * 24 * 60 * 60 + 5
+            )),
+            .success(Self.accountSnapshot(
+                usedPercent: 51,
+                secondaryUsedPercent: 28,
+                primaryResetsAt: now + 60 * 60,
+                secondaryResetsAt: now + 6 * 24 * 60 * 60
+            ))
+        ])
+        let model = CodexMonitorModel(codexClient: reader, codexUsageReader: MockUsageSummaryReader())
+
+        await model.refresh()
+        await model.refresh()
+
+        XCTAssertEqual(model.codexSnapshot?.primary?.remainingPercent, 49)
+        XCTAssertEqual(model.codexSnapshot?.secondary?.remainingPercent, 72)
+        XCTAssertEqual(model.menuBarTitle.providers.first?.primary, "49%")
+        XCTAssertEqual(model.menuBarTitle.providers.first?.weekly, "72%")
+    }
+
+    func testRefreshKeepsLastGoodSnapshotWhenTransientConfirmationFails() async {
+        let now = Int(Date().timeIntervalSince1970)
+        let reader = MockRateLimitsReader(results: [
+            .success(Self.accountSnapshot(
+                usedPercent: 50,
+                secondaryUsedPercent: 28,
+                primaryResetsAt: now + 60 * 60,
+                secondaryResetsAt: now + 6 * 24 * 60 * 60
+            )),
+            .success(Self.accountSnapshot(
+                usedPercent: 0,
+                secondaryUsedPercent: 1,
+                primaryResetsAt: now + 4 * 60 * 60,
+                secondaryResetsAt: now + 6 * 24 * 60 * 60 + 5
+            )),
+            .failure(CodexAppServerError.timeout)
+        ])
+        let model = CodexMonitorModel(codexClient: reader, codexUsageReader: MockUsageSummaryReader())
+
+        await model.refresh()
+        await model.refresh()
+
+        XCTAssertEqual(model.codexSnapshot?.primary?.remainingPercent, 50)
+        XCTAssertEqual(model.codexSnapshot?.secondary?.remainingPercent, 72)
+        XCTAssertNil(model.codexMessage)
+        XCTAssertEqual(model.menuBarTitle.providers.first?.primary, "50%")
+        XCTAssertEqual(model.menuBarTitle.providers.first?.weekly, "72%")
+    }
+
+    func testRefreshPublishesConfirmedUsageReset() async {
+        let now = Int(Date().timeIntervalSince1970)
+        let initial = Self.accountSnapshot(
+            usedPercent: 50,
+            secondaryUsedPercent: 28,
+            primaryResetsAt: now + 60 * 60,
+            secondaryResetsAt: now + 6 * 24 * 60 * 60
+        )
+        let reset = Self.accountSnapshot(
+            usedPercent: 0,
+            secondaryUsedPercent: 0,
+            primaryResetsAt: now + 5 * 60 * 60,
+            secondaryResetsAt: now + 7 * 24 * 60 * 60
+        )
+        let reader = MockRateLimitsReader(results: [
+            .success(initial),
+            .success(reset),
+            .success(reset)
+        ])
+        let model = CodexMonitorModel(codexClient: reader, codexUsageReader: MockUsageSummaryReader())
+
+        await model.refresh()
+        await model.refresh()
+
+        XCTAssertEqual(model.codexSnapshot?.primary?.remainingPercent, 100)
+        XCTAssertEqual(model.codexSnapshot?.secondary?.remainingPercent, 100)
+        XCTAssertEqual(model.menuBarTitle.providers.first?.primary, "100%")
+        XCTAssertEqual(model.menuBarTitle.providers.first?.weekly, "100%")
+    }
+
+    func testInitialRefreshConfirmsNearlyUnusedSnapshotBeforePublishingIt() async {
+        let now = Int(Date().timeIntervalSince1970)
+        let reader = MockRateLimitsReader(results: [
+            .success(Self.accountSnapshot(
+                usedPercent: 0,
+                secondaryUsedPercent: 1,
+                primaryResetsAt: now + 4 * 60 * 60,
+                secondaryResetsAt: now + 6 * 24 * 60 * 60
+            )),
+            .success(Self.accountSnapshot(
+                usedPercent: 50,
+                secondaryUsedPercent: 28,
+                primaryResetsAt: now + 60 * 60,
+                secondaryResetsAt: now + 6 * 24 * 60 * 60
+            ))
+        ])
+        let model = CodexMonitorModel(codexClient: reader, codexUsageReader: MockUsageSummaryReader())
+
+        await model.refresh()
+
+        XCTAssertEqual(model.codexSnapshot?.primary?.remainingPercent, 50)
+        XCTAssertEqual(model.codexSnapshot?.secondary?.remainingPercent, 72)
+        XCTAssertEqual(model.menuBarTitle.providers.first?.primary, "50%")
+        XCTAssertEqual(model.menuBarTitle.providers.first?.weekly, "72%")
+    }
+
     func testRefreshPublishesResetCredits() async {
         let summary = RateLimitResetCreditsSummary(availableCount: 3, credits: nil)
         let reader = MockRateLimitsReader(results: [
@@ -282,6 +421,7 @@ final class CodexMonitorModelTests: XCTestCase {
 
     private static func snapshot(
         usedPercent: Int,
+        secondaryUsedPercent: Int = 10,
         primaryResetsAt: Int? = nil,
         secondaryResetsAt: Int? = nil
     ) -> RateLimitsSnapshot {
@@ -289,7 +429,7 @@ final class CodexMonitorModelTests: XCTestCase {
             limitId: "codex",
             limitName: "Codex",
             primary: RateLimitWindow(usedPercent: usedPercent, resetsAt: primaryResetsAt, windowDurationMins: 300),
-            secondary: RateLimitWindow(usedPercent: 10, resetsAt: secondaryResetsAt, windowDurationMins: 10_080),
+            secondary: RateLimitWindow(usedPercent: secondaryUsedPercent, resetsAt: secondaryResetsAt, windowDurationMins: 10_080),
             credits: nil,
             planType: nil,
             rateLimitReachedType: nil
@@ -298,6 +438,7 @@ final class CodexMonitorModelTests: XCTestCase {
 
     private static func accountSnapshot(
         usedPercent: Int,
+        secondaryUsedPercent: Int = 10,
         primaryResetsAt: Int? = nil,
         secondaryResetsAt: Int? = nil,
         rateLimitResetCredits: RateLimitResetCreditsSummary? = nil
@@ -305,6 +446,7 @@ final class CodexMonitorModelTests: XCTestCase {
         CodexAccountSnapshot(
             rateLimits: snapshot(
                 usedPercent: usedPercent,
+                secondaryUsedPercent: secondaryUsedPercent,
                 primaryResetsAt: primaryResetsAt,
                 secondaryResetsAt: secondaryResetsAt
             ),

@@ -70,7 +70,11 @@ final class CodexMonitorModel: ObservableObject {
     }
 
     func refresh() async {
-        if isRefreshing { return }
+        if isRefreshing {
+            await refreshRateLimits()
+            return
+        }
+
         isRefreshing = true
         defer { isRefreshing = false }
 
@@ -146,11 +150,12 @@ final class CodexMonitorModel: ObservableObject {
 
     private func performRateLimitRead() async {
         do {
-            let next = try await codexClient.readRateLimits()
-            codexSnapshot = next.rateLimits
-            rateLimitResetCredits = next.rateLimitResetCredits
-            codexMessage = nil
-            lastUpdated = Date()
+            if let next = try await readConfirmedRateLimits() {
+                codexSnapshot = next.rateLimits
+                rateLimitResetCredits = next.rateLimitResetCredits
+                codexMessage = nil
+                lastUpdated = Date()
+            }
         } catch {
             codexSnapshot = nil
             rateLimitResetCredits = nil
@@ -158,6 +163,107 @@ final class CodexMonitorModel: ObservableObject {
         }
 
         updateMenuBarTitleForDisplayModeChange()
+    }
+
+    private func readConfirmedRateLimits() async throws -> CodexAccountSnapshot? {
+        let candidate = try await codexClient.readRateLimits()
+        let current = codexSnapshot
+        let requiresConfirmation = if let current {
+            isSuspiciousUsageRecovery(from: current, to: candidate.rateLimits)
+        } else {
+            isNearlyUnused(candidate.rateLimits)
+        }
+
+        guard requiresConfirmation else {
+            return candidate
+        }
+
+        let confirmation: CodexAccountSnapshot
+        do {
+            confirmation = try await codexClient.readRateLimits()
+        } catch {
+            if current != nil {
+                return nil
+            }
+            throw error
+        }
+
+        if areConsistent(candidate.rateLimits, confirmation.rateLimits) {
+            return confirmation
+        }
+
+        if let current {
+            guard !isSuspiciousUsageRecovery(from: current, to: confirmation.rateLimits) else {
+                return nil
+            }
+        } else if isNearlyUnused(confirmation.rateLimits) {
+            return nil
+        }
+
+        return confirmation
+    }
+
+    private func isNearlyUnused(_ snapshot: RateLimitsSnapshot) -> Bool {
+        guard let primary = snapshot.primary, let secondary = snapshot.secondary else {
+            return false
+        }
+
+        return primary.usedPercent <= 1 && secondary.usedPercent <= 1
+    }
+
+    private func isSuspiciousUsageRecovery(
+        from current: RateLimitsSnapshot,
+        to candidate: RateLimitsSnapshot,
+        referenceDate: Date = Date()
+    ) -> Bool {
+        isSuspiciousUsageRecovery(
+            from: current.primary,
+            to: candidate.primary,
+            referenceDate: referenceDate
+        ) || isSuspiciousUsageRecovery(
+            from: current.secondary,
+            to: candidate.secondary,
+            referenceDate: referenceDate
+        )
+    }
+
+    private func isSuspiciousUsageRecovery(
+        from current: RateLimitWindow?,
+        to candidate: RateLimitWindow?,
+        referenceDate: Date
+    ) -> Bool {
+        guard let current, let candidate else { return false }
+        guard current.usedPercent - candidate.usedPercent > 2 else { return false }
+
+        guard let resetDate = current.resetDate else { return true }
+        return resetDate.timeIntervalSince(referenceDate) > 30
+    }
+
+    private func areConsistent(_ lhs: RateLimitsSnapshot, _ rhs: RateLimitsSnapshot) -> Bool {
+        areConsistent(lhs.primary, rhs.primary) && areConsistent(lhs.secondary, rhs.secondary)
+    }
+
+    private func areConsistent(_ lhs: RateLimitWindow?, _ rhs: RateLimitWindow?) -> Bool {
+        switch (lhs, rhs) {
+        case (nil, nil):
+            return true
+        case let (lhs?, rhs?):
+            let resetDifference: Int
+            switch (lhs.resetsAt, rhs.resetsAt) {
+            case (nil, nil):
+                resetDifference = 0
+            case let (lhsReset?, rhsReset?):
+                resetDifference = abs(lhsReset - rhsReset)
+            default:
+                return false
+            }
+
+            return abs(lhs.usedPercent - rhs.usedPercent) <= 2
+                && resetDifference <= 60
+                && lhs.windowDurationMins == rhs.windowDurationMins
+        default:
+            return false
+        }
     }
 
     private func refreshUsageSummary() async {
