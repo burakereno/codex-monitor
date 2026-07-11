@@ -227,7 +227,7 @@ jobs:
             "teamIdentifier": "$TEAM_IDENTIFIER"
           }
           JSON
-          plutil -lint "$MANIFEST_ASSET_NAME"
+          node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$MANIFEST_ASSET_NAME"
       - name: Create Tag
         run: |
           git config user.name "github-actions"
