@@ -17,6 +17,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Load Release Contract
+        run: |
+          if grep -Ev '^(#.*|[[:space:]]*|[A-Z0-9_]+=[^[:cntrl:]]*)$' .github/release-contract.env; then
+            echo "::error::Invalid release contract syntax"
+            exit 1
+          fi
+          cat .github/release-contract.env >> "$GITHUB_ENV"
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
@@ -108,7 +115,7 @@ jobs:
         run: |
           APP_VERSION="${{ steps.version.outputs.short_version }}" \
           APP_BUILD_NUMBER="${{ steps.version.outputs.build_number }}" \
-          BUNDLE_IDENTIFIER="dev.local.CodexMonitor" \
+          BUNDLE_IDENTIFIER="$BUNDLE_IDENTIFIER" \
           CODESIGN_IDENTITY="${{ steps.signing.outputs.identity }}" \
           ./scripts/build-app.sh
 
@@ -137,6 +144,27 @@ jobs:
           fi
           echo "Built app version $BUILT matches tag"
 
+      - name: Verify Release Contract
+        run: |
+          APP_PATH=".build/$APP_BUNDLE_NAME"
+          INFO_PLIST="$APP_PATH/Contents/Info.plist"
+          ACTUAL_BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$INFO_PLIST")
+          if [ "$ACTUAL_BUNDLE_ID" != "$BUNDLE_IDENTIFIER" ]; then
+            echo "::error::Bundle identifier mismatch: $ACTUAL_BUNDLE_ID"
+            exit 1
+          fi
+          test -x "$APP_PATH/Contents/MacOS/$EXECUTABLE_NAME"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          SIGNING_DETAILS="$(codesign -dv --verbose=4 "$APP_PATH" 2>&1)"
+          ACTUAL_TEAM="$(printf '%s\n' "$SIGNING_DETAILS" | sed -n 's/^TeamIdentifier=//p' | tail -1)"
+          if [ "$ACTUAL_TEAM" != "$TEAM_IDENTIFIER" ]; then
+            echo "::error::TeamIdentifier mismatch: $ACTUAL_TEAM"
+            exit 1
+          fi
+          if ! printf '%s\n' "$SIGNING_DETAILS" | grep -q runtime; then
+            echo "::error::Release app is missing hardened runtime (--options runtime)."
+            exit 1
+          fi
       - name: Notarize App
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -152,6 +180,11 @@ jobs:
           xcrun stapler staple ".build/Codex Monitor.app"
           xcrun stapler validate ".build/Codex Monitor.app"
 
+      - name: Assess Notarized App
+        run: |
+          APP_PATH=".build/$APP_BUNDLE_NAME"
+          xcrun stapler validate "$APP_PATH"
+          spctl --assess --type execute --verbose=4 "$APP_PATH"
       - name: Create DMG
         run: |
           ./scripts/create-dmg.sh ".build/Codex Monitor.app" CodexMonitor.dmg
@@ -171,6 +204,30 @@ jobs:
           xcrun stapler staple CodexMonitor.dmg
           xcrun stapler validate CodexMonitor.dmg
 
+      - name: Verify DMG and Generate Update Manifest
+        run: |
+          codesign --verify --strict --verbose=2 "$DMG_ASSET_NAME"
+          DMG_DETAILS="$(codesign -dv --verbose=4 "$DMG_ASSET_NAME" 2>&1)"
+          DMG_TEAM="$(printf '%s\n' "$DMG_DETAILS" | sed -n 's/^TeamIdentifier=//p' | tail -1)"
+          if [ "$DMG_TEAM" != "$TEAM_IDENTIFIER" ]; then
+            echo "::error::DMG TeamIdentifier mismatch: $DMG_TEAM"
+            exit 1
+          fi
+          xcrun stapler validate "$DMG_ASSET_NAME"
+          spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG_ASSET_NAME"
+          SHA256="$(shasum -a 256 "$DMG_ASSET_NAME" | awk '{print $1}')"
+          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${VERSION#v}"
+          cat > "$MANIFEST_ASSET_NAME" <<JSON
+          {
+            "version": "$VERSION",
+            "asset": "$DMG_ASSET_NAME",
+            "sha256": "$SHA256",
+            "bundleIdentifier": "$BUNDLE_IDENTIFIER",
+            "teamIdentifier": "$TEAM_IDENTIFIER"
+          }
+          JSON
+          plutil -lint "$MANIFEST_ASSET_NAME"
       - name: Create Tag
         run: |
           git config user.name "github-actions"
@@ -182,7 +239,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.version }}
-          files: CodexMonitor.dmg
+          files: |
+            CodexMonitor.dmg
+            CodexMonitor.dmg.update.json
           body: |
             ## Codex Monitor ${{ steps.version.outputs.version }}
 

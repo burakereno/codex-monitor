@@ -8,13 +8,17 @@ final class UpdateChecker: ObservableObject {
     private static let owner = "burakereno"
     private static let repo = "codex-monitor"
     private static let assetName = "CodexMonitor.dmg"
+    private static let manifestName = "CodexMonitor.dmg.update.json"
     private static let productionBundleIdentifier = "dev.local.CodexMonitor"
+    private static let appBundleName = "Codex Monitor.app"
+    private static let executableName = "CodexMonitor"
     private static let checkInterval: TimeInterval = 2 * 60 * 60
     private static let minimumManualCheckInterval: TimeInterval = 30 * 60
     private static let minimumVisibleCheckDuration: UInt64 = 500_000_000
 
     @Published private(set) var latestVersion: String?
     @Published private(set) var downloadURL: URL?
+    private var manifestURL: URL?
     @Published private(set) var isChecking = false
     @Published private(set) var isDownloading = false
     @Published private(set) var downloadProgress: Double = 0
@@ -90,6 +94,7 @@ final class UpdateChecker: ObservableObject {
             let releaseInfo = try await Self.fetchLatestReleaseInfo()
             latestVersion = releaseInfo.version
             downloadURL = releaseInfo.downloadURL
+            manifestURL = releaseInfo.manifestURL
             lastError = nil
         } catch {
             if reportsErrors {
@@ -115,7 +120,7 @@ final class UpdateChecker: ObservableObject {
 
         guard !isDownloading else { return }
 
-        guard let downloadURL, let latestVersion else {
+        guard let downloadURL, let manifestURL, let latestVersion else {
             lastError = "Update download is unavailable."
             return
         }
@@ -124,7 +129,7 @@ final class UpdateChecker: ObservableObject {
         downloadProgress = 0
         lastError = nil
 
-        let task = URLSession.shared.downloadTask(with: downloadURL) { [weak self] tmpURL, _, error in
+        let task = URLSession.shared.downloadTask(with: downloadURL) { [weak self] tmpURL, response, error in
             Task { @MainActor in
                 guard let self else { return }
                 defer {
@@ -142,22 +147,43 @@ final class UpdateChecker: ObservableObject {
                     return
                 }
 
-                let downloads = try? FileManager.default.url(
-                    for: .downloadsDirectory,
-                    in: .userDomainMask,
-                    appropriateFor: nil,
-                    create: true
-                )
-                let fileName = "CodexMonitor-\(self.latestVersion ?? "latest")-\(UUID().uuidString).dmg"
-                let destination = (downloads ?? FileManager.default.temporaryDirectory)
-                    .appendingPathComponent(fileName)
+                guard let httpResponse = response as? HTTPURLResponse,
+                      (200..<300).contains(httpResponse.statusCode)
+                else {
+                    self.lastError = UpdateError.badResponse.localizedDescription
+                    return
+                }
 
-                try? FileManager.default.removeItem(at: destination)
+                let workDirectory = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("codex-monitor-update-\(UUID().uuidString)", isDirectory: true)
+                let destination = workDirectory.appendingPathComponent(Self.assetName)
 
                 do {
+                    try FileManager.default.createDirectory(
+                        at: workDirectory,
+                        withIntermediateDirectories: false,
+                        attributes: [.posixPermissions: 0o700]
+                    )
                     try FileManager.default.moveItem(at: tmpURL, to: destination)
-                    self.installUpdate(dmgURL: destination, expectedVersion: latestVersion)
+                    let manifest = try await Self.fetchManifest(at: manifestURL)
+                    let assetName = Self.assetName
+                    let bundleIdentifier = Self.productionBundleIdentifier
+                    try await Task.detached {
+                        try UpdateSecurity.verify(
+                            manifest: manifest,
+                            artifactURL: destination,
+                            expectedVersion: latestVersion,
+                            expectedAsset: assetName,
+                            expectedBundleIdentifier: bundleIdentifier
+                        )
+                    }.value
+                    self.installUpdate(
+                        dmgURL: destination,
+                        expectedVersion: latestVersion,
+                        expectedSHA256: manifest.sha256.lowercased()
+                    )
                 } catch {
+                    try? FileManager.default.removeItem(at: workDirectory)
                     self.lastError = error.localizedDescription
                 }
             }
@@ -171,153 +197,25 @@ final class UpdateChecker: ObservableObject {
         task.resume()
     }
 
-    private func installUpdate(dmgURL: URL, expectedVersion: String) {
+    private func installUpdate(dmgURL: URL, expectedVersion: String, expectedSHA256: String) {
         let currentBundle = URL(fileURLWithPath: Bundle.main.bundlePath)
         let targetBundle = currentBundle.path.hasPrefix("/Applications/")
             ? currentBundle
-            : URL(fileURLWithPath: "/Applications/Codex Monitor.app")
-
-        let scriptURL = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("codex-monitor-install-\(UUID().uuidString).sh")
-        let logURL = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("codex-monitor-install.log")
-        let mountPointURL = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("codex-monitor-mount-\(UUID().uuidString)")
-
-        let script = """
-        #!/bin/bash
-        set -u
-        exec >"\(logURL.path)" 2>&1
-
-        PARENT_PID="$1"
-        DMG="$2"
-        EXPECTED_BUNDLE_ID="$3"
-        EXPECTED_VERSION="$4"
-        TARGET="\(targetBundle.path)"
-        MOUNT_POINT="\(mountPointURL.path)"
-        TARGET_PARENT="$(/usr/bin/dirname "$TARGET")"
-        STAGED_APP="$TARGET_PARENT/.Codex Monitor.app.update.$$"
-        BACKUP_APP="$TARGET_PARENT/.Codex Monitor.app.previous.$$"
-        MOUNT_ATTACHED=0
-
-        cleanup_mount() {
-            if [ "$MOUNT_ATTACHED" = "1" ]; then
-                /usr/bin/hdiutil detach "$MOUNT_POINT" -quiet -force 2>/dev/null || true
-                MOUNT_ATTACHED=0
-            fi
-            /bin/rmdir "$MOUNT_POINT" 2>/dev/null || true
-        }
-
-        relaunch_existing_app() {
-            if [ -d "$TARGET" ]; then
-                /usr/bin/open "$TARGET" 2>/dev/null || true
-            fi
-        }
-
-        fail() {
-            echo "[install] error: $*"
-            cleanup_mount
-            /bin/rm -rf "$STAGED_APP"
-            if [ ! -d "$TARGET" ] && [ -d "$BACKUP_APP" ]; then
-                /bin/mv "$BACKUP_APP" "$TARGET" 2>/dev/null || true
-            fi
-            relaunch_existing_app
-            if [ -f "$DMG" ]; then
-                /usr/bin/open "$DMG" 2>/dev/null || true
-            fi
-            exit 1
-        }
-
-        echo "[install] waiting for parent $PARENT_PID to exit"
-        for _ in $(seq 1 50); do
-            kill -0 "$PARENT_PID" 2>/dev/null || break
-            sleep 0.1
-        done
-        kill -0 "$PARENT_PID" 2>/dev/null && kill "$PARENT_PID" 2>/dev/null
-        sleep 0.5
-
-        echo "[install] mounting $DMG"
-        /bin/mkdir -p "$MOUNT_POINT" || fail "could not create mount point: $MOUNT_POINT"
-        /usr/bin/hdiutil attach -readonly -nobrowse -noautoopen -mountpoint "$MOUNT_POINT" "$DMG" || fail "could not mount DMG"
-        MOUNT_ATTACHED=1
-        echo "[install] mount point: $MOUNT_POINT"
-
-        SRC="$MOUNT_POINT/Codex Monitor.app"
-        if [ ! -d "$SRC" ]; then
-            fail "source app not found at $SRC"
-        fi
-
-        SRC_INFO="$SRC/Contents/Info.plist"
-        SRC_EXEC="$SRC/Contents/MacOS/CodexMonitor"
-        SRC_BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$SRC_INFO" 2>/dev/null || true)
-        SRC_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$SRC_INFO" 2>/dev/null || true)
-
-        if [ "$SRC_BUNDLE_ID" != "$EXPECTED_BUNDLE_ID" ]; then
-            fail "bundle id mismatch: expected $EXPECTED_BUNDLE_ID, got $SRC_BUNDLE_ID"
-        fi
-
-        if [ "$SRC_VERSION" != "$EXPECTED_VERSION" ]; then
-            fail "version mismatch: expected $EXPECTED_VERSION, got $SRC_VERSION"
-        fi
-
-        if [ ! -x "$SRC_EXEC" ]; then
-            fail "executable not found or not executable: $SRC_EXEC"
-        fi
-
-        echo "[install] staging new app at $STAGED_APP"
-        /bin/rm -rf "$STAGED_APP" "$BACKUP_APP"
-        /usr/bin/ditto "$SRC" "$STAGED_APP" || fail "could not stage new app"
-
-        if [ -d "$TARGET" ]; then
-            echo "[install] moving old app to backup"
-            /bin/mv "$TARGET" "$BACKUP_APP" || fail "could not move old app to backup"
-        fi
-
-        echo "[install] installing staged app"
-        if ! /bin/mv "$STAGED_APP" "$TARGET"; then
-            if [ -d "$BACKUP_APP" ]; then
-                /bin/mv "$BACKUP_APP" "$TARGET" 2>/dev/null || true
-            fi
-            fail "could not install staged app"
-        fi
-
-        /bin/rm -rf "$BACKUP_APP"
-
-        echo "[install] detaching dmg"
-        cleanup_mount
-
-        echo "[install] removing downloaded dmg"
-        rm -f "$DMG"
-
-        echo "[install] launching new app"
-        /usr/bin/open "$TARGET"
-
-        rm -f "\(scriptURL.path)"
-        echo "[install] done"
-        """
+            : URL(fileURLWithPath: "/Applications/\(Self.appBundleName)")
 
         do {
-            try script.write(to: scriptURL, atomically: true, encoding: .utf8)
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o755],
-                ofItemAtPath: scriptURL.path
+            try UpdateSecurity.launchInstaller(
+                parentPID: ProcessInfo.processInfo.processIdentifier,
+                dmgURL: dmgURL,
+                targetURL: targetBundle,
+                expectedBundleIdentifier: Self.productionBundleIdentifier,
+                expectedVersion: expectedVersion,
+                appBundleName: Self.appBundleName,
+                executableName: Self.executableName,
+                expectedSHA256: expectedSHA256
             )
         } catch {
-            lastError = "Could not write installer script: \(error.localizedDescription)"
-            NSWorkspace.shared.open(dmgURL)
-            return
-        }
-
-        let pid = ProcessInfo.processInfo.processIdentifier
-        let task = Process()
-        task.executableURL = scriptURL
-        task.arguments = ["\(pid)", dmgURL.path, Self.productionBundleIdentifier, expectedVersion]
-
-        do {
-            try task.run()
-        } catch {
             lastError = "Could not launch installer: \(error.localizedDescription)"
-            NSWorkspace.shared.open(dmgURL)
             return
         }
 
@@ -360,7 +258,8 @@ final class UpdateChecker: ObservableObject {
         }
 
         let releaseInfo = try releaseInfo(fromResolvedLatestURL: resolvedURL)
-        try await validateDownloadURL(releaseInfo.downloadURL)
+        try await validateDownloadURL(releaseInfo.downloadURL, assetName: assetName)
+        try await validateDownloadURL(releaseInfo.manifestURL, assetName: manifestName)
         return releaseInfo
     }
 
@@ -376,10 +275,30 @@ final class UpdateChecker: ObservableObject {
         }
 
         let downloadURL = URL(string: "https://github.com/\(owner)/\(repo)/releases/download/\(tag)/\(assetName)")!
-        return UpdateReleaseInfo(version: version, downloadURL: downloadURL)
+        let manifestURL = URL(string: "https://github.com/\(owner)/\(repo)/releases/download/\(tag)/\(manifestName)")!
+        return UpdateReleaseInfo(version: version, downloadURL: downloadURL, manifestURL: manifestURL)
     }
 
-    private static func validateDownloadURL(_ url: URL) async throws {
+    private static func fetchManifest(at url: URL) async throws -> UpdateManifest {
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData)
+        request.timeoutInterval = 15
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("CodexMonitor-UpdateChecker", forHTTPHeaderField: "User-Agent")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200..<300).contains(httpResponse.statusCode)
+        else {
+            throw UpdateError.badResponse
+        }
+        do {
+            return try JSONDecoder().decode(UpdateManifest.self, from: data)
+        } catch {
+            throw UpdateError.invalidManifest
+        }
+    }
+
+    private static func validateDownloadURL(_ url: URL, assetName: String) async throws {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData)
         request.httpMethod = "HEAD"
         request.timeoutInterval = 12
@@ -409,6 +328,7 @@ enum UpdateError: LocalizedError {
     case badStatus(Int)
     case missingAsset(String)
     case missingVersion
+    case invalidManifest
 
     var errorDescription: String? {
         switch self {
@@ -420,6 +340,8 @@ enum UpdateError: LocalizedError {
             return "GitHub release is missing \(assetName)"
         case .missingVersion:
             return "GitHub release is missing a version tag"
+        case .invalidManifest:
+            return "GitHub release contains an invalid update manifest"
         }
     }
 }
@@ -427,4 +349,5 @@ enum UpdateError: LocalizedError {
 struct UpdateReleaseInfo: Equatable {
     let version: String
     let downloadURL: URL
+    let manifestURL: URL
 }
