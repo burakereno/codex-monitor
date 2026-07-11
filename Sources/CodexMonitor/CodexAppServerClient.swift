@@ -66,6 +66,13 @@ struct CodexBinaryLocator: @unchecked Sendable {
 
 protocol CodexAccountReading: Sendable {
     func readRateLimits() async throws -> CodexAccountSnapshot
+    func rateLimitUpdateEvents() async -> AsyncStream<Void>
+}
+
+extension CodexAccountReading {
+    func rateLimitUpdateEvents() async -> AsyncStream<Void> {
+        AsyncStream { _ in }
+    }
 }
 
 private final class TimeoutState: @unchecked Sendable {
@@ -82,6 +89,200 @@ private final class TimeoutState: @unchecked Sendable {
         lock.lock()
         timedOut = true
         lock.unlock()
+    }
+}
+
+/// Bridges the blocking stdio app-server transport into an AsyncStream.
+/// All mutable Process state is protected by `lock`; this is the safety
+/// invariant behind the narrowly scoped `@unchecked Sendable` conformance.
+private final class CodexRateLimitEventObserver: @unchecked Sendable {
+    private let binaryLocator: CodexBinaryLocator
+    private let appVersion: String
+    private let lock = NSLock()
+    private var process: Process?
+    private var isStopped = false
+
+    init(binaryLocator: CodexBinaryLocator, appVersion: String) {
+        self.binaryLocator = binaryLocator
+        self.appVersion = appVersion
+    }
+
+    func start(continuation: AsyncStream<Void>.Continuation) {
+        DispatchQueue.global(qos: .utility).async { [self] in
+            run(continuation: continuation)
+        }
+    }
+
+    func stop() {
+        lock.lock()
+        isStopped = true
+        let process = process
+        lock.unlock()
+
+        if process?.isRunning == true {
+            process?.terminate()
+        }
+    }
+
+    private func run(continuation: AsyncStream<Void>.Continuation) {
+        defer { continuation.finish() }
+
+        do {
+            let codexURL = try binaryLocator.locate()
+            let process = Process()
+            let stdin = Pipe()
+            let stdout = Pipe()
+
+            process.executableURL = codexURL
+            process.arguments = ["app-server", "--listen", "stdio://"]
+            process.standardInput = stdin
+            process.standardOutput = stdout
+            process.standardError = FileHandle.nullDevice
+
+            guard register(process: process) else { return }
+            defer {
+                if process.isRunning {
+                    process.terminate()
+                }
+                try? stdin.fileHandleForWriting.close()
+                clear(process: process)
+            }
+
+            do {
+                try process.run()
+            } catch {
+                return
+            }
+
+            if stopped {
+                process.terminate()
+                return
+            }
+
+            let timeoutState = TimeoutState()
+            let initializationTimeout = DispatchWorkItem {
+                if process.isRunning {
+                    timeoutState.markTimedOut()
+                    process.terminate()
+                }
+            }
+            DispatchQueue.global().asyncAfter(
+                deadline: .now() + 8,
+                execute: initializationTimeout
+            )
+
+            try send([
+                "id": 1,
+                "method": "initialize",
+                "params": [
+                    "clientInfo": [
+                        "name": "codex-monitor",
+                        "title": "Codex Monitor",
+                        "version": appVersion
+                    ],
+                    "capabilities": [
+                        "experimentalApi": true,
+                        "optOutNotificationMethods": [
+                            "thread/started",
+                            "thread/status/changed",
+                            "thread/tokenUsage/updated"
+                        ]
+                    ]
+                ]
+            ], to: stdin.fileHandleForWriting)
+
+            _ = try readJSONLine(
+                from: stdout.fileHandleForReading,
+                matchingId: 1,
+                timeoutState: timeoutState
+            )
+            initializationTimeout.cancel()
+
+            try send(["method": "initialized"], to: stdin.fileHandleForWriting)
+
+            while !stopped, let line = readLineData(from: stdout.fileHandleForReading) {
+                guard
+                    let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                    object["method"] as? String == "account/rateLimits/updated"
+                else {
+                    continue
+                }
+
+                continuation.yield(())
+            }
+        } catch {
+            return
+        }
+    }
+
+    private var stopped: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return isStopped
+    }
+
+    private func register(process: Process) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !isStopped else { return false }
+        self.process = process
+        return true
+    }
+
+    private func clear(process: Process) {
+        lock.lock()
+        if self.process === process {
+            self.process = nil
+        }
+        lock.unlock()
+    }
+
+    private func send(_ object: [String: Any], to handle: FileHandle) throws {
+        let data = try JSONSerialization.data(withJSONObject: object)
+        handle.write(data)
+        handle.write(Data([0x0a]))
+    }
+
+    private func readJSONLine(
+        from handle: FileHandle,
+        matchingId expectedId: Int,
+        timeoutState: TimeoutState
+    ) throws -> [String: Any] {
+        while true {
+            guard let line = readLineData(from: handle) else {
+                if timeoutState.didTimeOut {
+                    throw CodexAppServerError.timeout
+                }
+                throw CodexAppServerError.missingRateLimits
+            }
+
+            guard
+                let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                let id = object["id"] as? Int,
+                id == expectedId
+            else {
+                continue
+            }
+
+            return object
+        }
+    }
+
+    private func readLineData(from handle: FileHandle) -> Data? {
+        var buffer = Data()
+
+        while true {
+            let chunk = handle.readData(ofLength: 1)
+            if chunk.isEmpty {
+                return buffer.isEmpty ? nil : buffer
+            }
+
+            if chunk.first == 0x0a {
+                return buffer
+            }
+
+            buffer.append(chunk)
+        }
     }
 }
 
@@ -102,6 +303,20 @@ final class CodexAppServerClient: CodexAccountReading, @unchecked Sendable {
                     continuation.resume(throwing: error)
                 }
             }
+        }
+    }
+
+    func rateLimitUpdateEvents() async -> AsyncStream<Void> {
+        let observer = CodexRateLimitEventObserver(
+            binaryLocator: binaryLocator,
+            appVersion: appVersion
+        )
+
+        return AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+            continuation.onTermination = { @Sendable _ in
+                observer.stop()
+            }
+            observer.start(continuation: continuation)
         }
     }
 

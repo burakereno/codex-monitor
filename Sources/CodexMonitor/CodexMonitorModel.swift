@@ -13,6 +13,9 @@ final class CodexMonitorModel: ObservableObject {
     private let codexClient: CodexAccountReading
     private let codexUsageReader: CodexUsageSummaryReading
     private var refreshTask: Task<Void, Never>?
+    private var rateLimitEventTask: Task<Void, Never>?
+    private var isRefreshingRateLimits = false
+    private var rateLimitRefreshRequested = false
 
     init(
         codexClient: CodexAccountReading = CodexAppServerClient(),
@@ -24,13 +27,37 @@ final class CodexMonitorModel: ObservableObject {
 
     func start() {
         refreshTask?.cancel()
+        rateLimitEventTask?.cancel()
+
         refreshTask = Task { [weak self] in
             guard let self else { return }
             await self.refresh()
 
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(120))
+                do {
+                    try await Task.sleep(for: .seconds(120))
+                } catch {
+                    return
+                }
                 await self.refresh()
+            }
+        }
+
+        rateLimitEventTask = Task { [weak self] in
+            guard let self else { return }
+
+            while !Task.isCancelled {
+                let events = await codexClient.rateLimitUpdateEvents()
+                for await _ in events {
+                    guard !Task.isCancelled else { return }
+                    await refreshRateLimits()
+                }
+
+                do {
+                    try await Task.sleep(for: .seconds(5))
+                } catch {
+                    return
+                }
             }
         }
     }
@@ -38,6 +65,8 @@ final class CodexMonitorModel: ObservableObject {
     func stop() {
         refreshTask?.cancel()
         refreshTask = nil
+        rateLimitEventTask?.cancel()
+        rateLimitEventTask = nil
     }
 
     func refresh() async {
@@ -46,9 +75,6 @@ final class CodexMonitorModel: ObservableObject {
         defer { isRefreshing = false }
 
         await refreshCodex()
-
-        lastUpdated = Date()
-        updateMenuBarTitleForDisplayModeChange()
     }
 
     func updateMenuBarTitleForDisplayModeChange() {
@@ -100,17 +126,41 @@ final class CodexMonitorModel: ObservableObject {
     }
 
     private func refreshCodex() async {
+        await refreshRateLimits()
+        await refreshUsageSummary()
+    }
+
+    private func refreshRateLimits() async {
+        guard !isRefreshingRateLimits else {
+            rateLimitRefreshRequested = true
+            return
+        }
+
+        isRefreshingRateLimits = true
+        repeat {
+            rateLimitRefreshRequested = false
+            await performRateLimitRead()
+        } while rateLimitRefreshRequested
+        isRefreshingRateLimits = false
+    }
+
+    private func performRateLimitRead() async {
         do {
             let next = try await codexClient.readRateLimits()
             codexSnapshot = next.rateLimits
             rateLimitResetCredits = next.rateLimitResetCredits
             codexMessage = nil
+            lastUpdated = Date()
         } catch {
             codexSnapshot = nil
             rateLimitResetCredits = nil
             codexMessage = error.localizedDescription
         }
 
+        updateMenuBarTitleForDisplayModeChange()
+    }
+
+    private func refreshUsageSummary() async {
         do {
             codexUsageSummary = try await codexUsageReader.readUsageSummary(referenceDate: Date())
         } catch {
