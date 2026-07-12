@@ -3,6 +3,7 @@ import SwiftUI
 
 struct StatusPanelView: View {
     @ObservedObject var model: CodexMonitorModel
+    let onPreferredHeightChange: (CGFloat) -> Void
     @AppStorage(LimitDisplayMode.storageKey) private var limitDisplayModeRaw = LimitDisplayMode.remaining.rawValue
     @AppStorage(MenuBarDisplayVersion.storageKey) private var menuBarDisplayVersionRaw = MenuBarDisplayVersion.version1.rawValue
     @AppStorage(MenuBarResetTimePreference.storageKey) private var showMenuBarResetTimes = false
@@ -12,10 +13,21 @@ struct StatusPanelView: View {
     @ObservedObject private var updater = UpdateChecker.shared
     @State private var showSettings = false
     @State private var showFooterUpToDate = false
+    @State private var headerHeight: CGFloat = 0
+    @State private var dashboardContentHeight: CGFloat = 0
+    @State private var settingsContentHeight: CGFloat = 0
+    @State private var footerHeight: CGFloat = 0
+    @State private var lastReportedHeight: CGFloat = 0
 
     var body: some View {
         VStack(spacing: 0) {
             header
+                .onGeometryChange(for: CGFloat.self) { proxy in
+                    proxy.size.height
+                } action: { height in
+                    headerHeight = height
+                    reportPreferredHeight()
+                }
 
             Divider().opacity(0.5)
 
@@ -26,6 +38,12 @@ struct StatusPanelView: View {
                             .padding(.horizontal, 12)
                             .padding(.top, 10)
                             .padding(.bottom, 12)
+                            .onGeometryChange(for: CGFloat.self) { proxy in
+                                proxy.size.height
+                            } action: { height in
+                                settingsContentHeight = height
+                                reportPreferredHeight()
+                            }
                     }
                     .transition(.asymmetric(
                         insertion: .move(edge: .trailing).combined(with: .opacity),
@@ -37,6 +55,12 @@ struct StatusPanelView: View {
                             .padding(.horizontal, 12)
                             .padding(.top, 10)
                             .padding(.bottom, 12)
+                            .onGeometryChange(for: CGFloat.self) { proxy in
+                                proxy.size.height
+                            } action: { height in
+                                dashboardContentHeight = height
+                                reportPreferredHeight()
+                            }
                     }
                     .transition(.asymmetric(
                         insertion: .move(edge: .leading).combined(with: .opacity),
@@ -51,8 +75,14 @@ struct StatusPanelView: View {
             Divider().opacity(0.5)
 
             footer
+                .onGeometryChange(for: CGFloat.self) { proxy in
+                    proxy.size.height
+                } action: { height in
+                    footerHeight = height
+                    reportPreferredHeight()
+                }
         }
-        .frame(width: StatusPanelLayout.width, height: StatusPanelLayout.height)
+        .frame(width: StatusPanelLayout.width)
         .preferredColorScheme(.dark)
         .onChange(of: limitDisplayModeRaw) { _, _ in
             model.updateMenuBarTitleForDisplayModeChange()
@@ -69,9 +99,24 @@ struct StatusPanelView: View {
         .onChange(of: showDockValues) { _, _ in
             notifyDockSettingsChanged()
         }
+        .onChange(of: showSettings) { _, _ in
+            reportPreferredHeight()
+        }
         .onAppear {
             launchAtLogin.refresh()
         }
+    }
+
+    private func reportPreferredHeight() {
+        let contentHeight = showSettings ? settingsContentHeight : dashboardContentHeight
+        guard headerHeight > 0, contentHeight > 0, footerHeight > 0 else { return }
+
+        let dividerHeights: CGFloat = 2
+        let preferredHeight = ceil(headerHeight + contentHeight + footerHeight + dividerHeights)
+        guard abs(lastReportedHeight - preferredHeight) > 0.5 else { return }
+
+        lastReportedHeight = preferredHeight
+        onPreferredHeightChange(preferredHeight)
     }
 
     private var content: some View {
@@ -429,9 +474,19 @@ private struct StatJackCardBackground: ViewModifier {
     }
 }
 
+private enum StatusSectionLayout {
+    static let contentPadding: CGFloat = 16
+    static let titleFontSize: CGFloat = 12
+}
+
 private extension View {
     func statJackCardBackground(cornerRadius: CGFloat = 10) -> some View {
         modifier(StatJackCardBackground(cornerRadius: cornerRadius))
+    }
+
+    func statusSectionCard() -> some View {
+        padding(StatusSectionLayout.contentPadding)
+            .statJackCardBackground()
     }
 }
 
@@ -544,7 +599,7 @@ private struct RateLimitResetCreditsCardView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             CardHeaderView(
                 icon: "arrow.counterclockwise.circle",
                 title: "Usage Limit Resets",
@@ -557,65 +612,62 @@ private struct RateLimitResetCreditsCardView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                VStack(spacing: 0) {
+                HStack(spacing: 6) {
                     ForEach(credits) { credit in
-                        RateLimitResetCreditRowView(credit: credit)
+                        RateLimitResetCreditTagView(credit: credit)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 14)
-        .padding(.bottom, 8)
-        .statJackCardBackground()
+        .statusSectionCard()
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Usage limit resets")
     }
 }
 
-private struct RateLimitResetCreditRowView: View {
+private struct RateLimitResetCreditTagView: View {
     let credit: RateLimitResetCredit
 
     var body: some View {
-        VStack(spacing: 0) {
-            Divider()
-                .opacity(0.35)
-
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "arrow.counterclockwise.circle.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.green)
-                    .frame(width: 16)
-                    .accessibilityHidden(true)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(credit.title ?? "Codex usage reset")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(2)
-
-                    expirationText
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+        expirationText
+            .font(.system(size: 10, weight: .semibold))
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background {
+                Capsule()
+                    .fill(Color.green.opacity(0.09))
+                    .overlay {
+                        Capsule()
+                            .stroke(Color.green.opacity(0.22), lineWidth: 0.5)
+                    }
             }
-            .padding(.vertical, 8)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilityText)
+    }
+
+    private var accessibilityText: String {
+        guard let expirationDate = credit.expirationDate else {
+            return "No expiration date"
         }
-        .accessibilityElement(children: .combine)
+
+        let date = expirationDate.formatted(.dateTime.month(.wide).day())
+        let remaining = ResetTimeFormatting.detailedRemaining(until: expirationDate)
+        return "Expires \(date), \(remaining) remaining"
     }
 
     private var expirationText: Text {
         guard let expirationDate = credit.expirationDate else {
-            return Text("No expiration date")
-                .font(.system(size: 11, weight: .medium))
+            return Text("No expiry")
                 .foregroundColor(.secondary)
         }
 
-        return Text("Expires ")
-            .font(.system(size: 11, weight: .medium))
-            .foregroundColor(.secondary)
-        + Text(expirationDate, format: .dateTime.month().day())
-            .font(.system(size: 11, weight: .bold))
+        return Text(expirationDate, format: .dateTime.month(.abbreviated).day())
             .foregroundColor(.white)
+        + Text(" · \(ResetTimeFormatting.detailedRemaining(until: expirationDate))")
+            .foregroundColor(.secondary)
     }
 }
 
@@ -631,25 +683,35 @@ private struct DailyUsageCardView: View {
             CardHeaderView(
                 icon: "chart.bar",
                 title: "Daily Usage",
-                trailing: "7d"
+                trailing: "15d"
             )
 
-            HStack(alignment: .bottom, spacing: 8) {
+            HStack(alignment: .bottom, spacing: 4) {
                 ForEach(days) { day in
-                    DailyUsageBarView(day: day, maxTokens: maxTokens)
+                    DailyUsageBarView(
+                        day: day,
+                        maxTokens: maxTokens,
+                        tooltipHorizontalOffset: tooltipHorizontalOffset(for: day)
+                    )
                 }
             }
-            .frame(height: 66, alignment: .bottom)
+            .frame(height: 80, alignment: .bottom)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .statJackCardBackground()
+        .statusSectionCard()
+    }
+
+    private func tooltipHorizontalOffset(for day: DailyTokenUsage) -> CGFloat {
+        if day.id == days.first?.id { return 24 }
+        if day.id == days.last?.id { return -24 }
+        return 0
     }
 }
 
 private struct DailyUsageBarView: View {
     let day: DailyTokenUsage
     let maxTokens: Int
+    let tooltipHorizontalOffset: CGFloat
+    @State private var isHovered = false
 
     private var ratio: Double {
         guard maxTokens > 0 else { return 0 }
@@ -657,24 +719,68 @@ private struct DailyUsageBarView: View {
     }
 
     private var barHeight: CGFloat {
-        day.totalTokens == 0 ? 6 : CGFloat(12 + ratio * 32)
+        day.totalTokens == 0 ? 5 : CGFloat(10 + ratio * 30)
+    }
+
+    private var isMonday: Bool {
+        Calendar.current.component(.weekday, from: day.date) == 2
     }
 
     var body: some View {
-        VStack(spacing: 7) {
-            RoundedRectangle(cornerRadius: 3)
+        VStack(spacing: 5) {
+            RoundedRectangle(cornerRadius: 2.5)
                 .fill(barColor)
                 .frame(height: barHeight)
-                .frame(maxHeight: 44, alignment: .bottom)
-                .help("\(formattedTokenCount(day.totalTokens)) tokens")
+                .frame(maxWidth: .infinity)
+                .frame(height: 58, alignment: .bottom)
+                .overlay(alignment: .bottom) {
+                    if isHovered {
+                        Text("\(day.totalTokens.formatted()) tokens")
+                            .font(.system(size: 9, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                            .fixedSize()
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background {
+                                Capsule()
+                                    .fill(Color(nsColor: .controlBackgroundColor))
+                                    .overlay {
+                                        Capsule()
+                                            .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+                                    }
+                                    .shadow(color: .black.opacity(0.4), radius: 4, y: 2)
+                                }
+                            .offset(x: tooltipHorizontalOffset, y: -(barHeight + 7))
+                    }
+                }
 
             Text(day.date.formatted(.dateTime.weekday(.abbreviated)))
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 9, weight: isMonday ? .bold : .medium))
+                .foregroundStyle(isMonday ? Color.green : Color.secondary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.75)
+                .minimumScaleFactor(0.55)
+                .frame(height: 12)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .frame(maxWidth: .infinity, minHeight: 75, maxHeight: 75, alignment: .bottom)
+        .overlay(alignment: .leading) {
+            if isMonday {
+                Rectangle()
+                    .fill(Color.primary.opacity(0.10))
+                    .frame(width: 0.5, height: 58)
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .offset(x: -2)
+                    .accessibilityHidden(true)
+            }
+        }
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            isHovered = hovering
+        }
+        .zIndex(isHovered ? 1 : 0)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(day.date.formatted(date: .complete, time: .omitted))
+        .accessibilityValue("\(day.totalTokens.formatted()) tokens")
     }
 
     private var barColor: Color {
@@ -742,9 +848,7 @@ private struct TokenUsageCardView: View {
                 }
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .statJackCardBackground()
+        .statusSectionCard()
     }
 
     private func tokenHeader(_ title: String) -> some View {
@@ -801,7 +905,7 @@ private struct CardHeaderView: View {
                 .frame(width: 15)
 
             Text(title)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: StatusSectionLayout.titleFontSize, weight: .semibold))
 
             Spacer(minLength: 8)
 
@@ -1248,7 +1352,7 @@ private struct LimitCardView: View {
                         .frame(width: 16)
 
                     Text(title)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: StatusSectionLayout.titleFontSize, weight: .semibold))
                 }
 
                 Spacer(minLength: 8)
@@ -1279,9 +1383,7 @@ private struct LimitCardView: View {
                     .lineLimit(1)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 16)
-        .statJackCardBackground()
+        .statusSectionCard()
     }
 
     private var percentText: String {
@@ -1313,13 +1415,15 @@ private struct LimitCardView: View {
     }
 
     private func resetTextComponents(for resetDate: Date) -> (relative: String, absolute: String) {
-        let relativeText = relativeResetText(until: resetDate)
+        let relativeText = ResetTimeFormatting.detailedRemaining(until: resetDate)
+        let timeText = resetDate.formatted(date: .omitted, time: .shortened)
         let absoluteText: String
 
-        if window?.windowDurationMins == 300 || Calendar.current.isDateInToday(resetDate) {
-            absoluteText = resetDate.formatted(date: .omitted, time: .shortened)
+        if window?.windowDurationMins == 300 {
+            absoluteText = timeText
         } else {
-            absoluteText = resetDate.formatted(.dateTime.month(.abbreviated).day())
+            let dateText = resetDate.formatted(.dateTime.month(.abbreviated).day())
+            absoluteText = "\(dateText), \(timeText)"
         }
 
         return (relativeText, absoluteText)
@@ -1328,19 +1432,6 @@ private struct LimitCardView: View {
     private var paceText: String {
         guard let window else { return "Pace: waiting" }
         return "Pace: \(window.pace.title)"
-    }
-
-    private func relativeResetText(until resetDate: Date) -> String {
-        let seconds = max(0, Int(resetDate.timeIntervalSinceNow))
-        let minutes = max(1, Int(ceil(Double(seconds) / 60)))
-
-        if window?.windowDurationMins == 300 || minutes < 1_440 {
-            let hours = max(1, Int(ceil(Double(minutes) / 60)))
-            return "\(hours)h"
-        }
-
-        let days = max(1, Int(ceil(Double(minutes) / 1_440)))
-        return "\(days)d"
     }
 
     private var tintColor: Color {

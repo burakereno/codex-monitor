@@ -50,6 +50,21 @@ final class CodexMonitorModelTests: XCTestCase {
         XCTAssertEqual(RateLimitWindow(usedPercent: 125, resetsAt: nil, windowDurationMins: 300).remainingPercent, 0)
     }
 
+    func testStatusPanelHeightUsesContentSizeWithinScreenBounds() {
+        XCTAssertEqual(
+            StatusPanelLayout.clampedHeight(640, visibleScreenHeight: 900),
+            640
+        )
+        XCTAssertEqual(
+            StatusPanelLayout.clampedHeight(1_000, visibleScreenHeight: 900),
+            876
+        )
+        XCTAssertEqual(
+            StatusPanelLayout.clampedHeight(120, visibleScreenHeight: 900),
+            240
+        )
+    }
+
     func testCompactResetTextUsesMinutesHoursAndDays() {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
 
@@ -60,6 +75,14 @@ final class CodexMonitorModelTests: XCTestCase {
                 windowDurationMins: 300
             ).compactResetText(relativeTo: now),
             "35m"
+        )
+        XCTAssertEqual(
+            RateLimitWindow(
+                usedPercent: 10,
+                resetsAt: Int(now.addingTimeInterval(59.5 * 60).timeIntervalSince1970),
+                windowDurationMins: 300
+            ).compactResetText(relativeTo: now),
+            "60m"
         )
         XCTAssertEqual(
             RateLimitWindow(
@@ -76,6 +99,39 @@ final class CodexMonitorModelTests: XCTestCase {
                 windowDurationMins: 10_080
             ).compactResetText(relativeTo: now),
             "3d"
+        )
+    }
+
+    func testDetailedResetTextIncludesPartialDaysAndHours() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+
+        XCTAssertEqual(
+            ResetTimeFormatting.detailedRemaining(
+                until: now.addingTimeInterval((6 * 24 + 12) * 60 * 60),
+                relativeTo: now
+            ),
+            "6d 12h"
+        )
+        XCTAssertEqual(
+            ResetTimeFormatting.detailedRemaining(
+                until: now.addingTimeInterval(45 * 60),
+                relativeTo: now
+            ),
+            "45m"
+        )
+        XCTAssertEqual(
+            ResetTimeFormatting.detailedRemaining(
+                until: now.addingTimeInterval(2 * 60 * 60),
+                relativeTo: now
+            ),
+            "2h"
+        )
+        XCTAssertEqual(
+            ResetTimeFormatting.detailedRemaining(
+                until: now.addingTimeInterval(6 * 24 * 60 * 60),
+                relativeTo: now
+            ),
+            "6d"
         )
     }
 
@@ -638,9 +694,10 @@ final class CodexUsageLogReaderTests: XCTestCase {
         XCTAssertEqual(summary.today.totalTokens, 1_300)
 
         XCTAssertEqual(summary.currentMonth.totalTokens, 3_000)
-        XCTAssertEqual(summary.dailyUsage.count, 7)
-        XCTAssertEqual(summary.dailyUsage[5].totalTokens, 700)
-        XCTAssertEqual(summary.dailyUsage[6].totalTokens, 1_300)
+        XCTAssertEqual(summary.dailyUsage.count, 15)
+        XCTAssertEqual(summary.dailyUsage[6].totalTokens, 1_000)
+        XCTAssertEqual(summary.dailyUsage[13].totalTokens, 700)
+        XCTAssertEqual(summary.dailyUsage[14].totalTokens, 1_300)
 
         XCTAssertEqual(summary.modelBreakdown.first?.model, "gpt-5.5")
         XCTAssertEqual(summary.modelBreakdown.first?.percentage, 67)

@@ -38,7 +38,7 @@ final class CodexUsageLogReader: CodexUsageSummaryReading, @unchecked Sendable {
 
         let todayStart = calendar.startOfDay(for: referenceDate)
         let tomorrowStart = calendar.date(byAdding: .day, value: 1, to: todayStart) ?? referenceDate
-        let sevenDayStart = calendar.date(byAdding: .day, value: -6, to: todayStart) ?? todayStart
+        let fifteenDayStart = calendar.date(byAdding: .day, value: -14, to: todayStart) ?? todayStart
         let monthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: referenceDate)) ?? todayStart
         let nextMonthStart = calendar.date(byAdding: .month, value: 1, to: monthStart) ?? tomorrowStart
 
@@ -50,7 +50,7 @@ final class CodexUsageLogReader: CodexUsageSummaryReading, @unchecked Sendable {
         for file in files {
             let fileEvents = try tokenEvents(in: file)
             for event in fileEvents {
-                if event.timestamp >= sevenDayStart && event.timestamp < tomorrowStart {
+                if event.timestamp >= fifteenDayStart && event.timestamp < tomorrowStart {
                     let day = calendar.startOfDay(for: event.timestamp)
                     dailyTotals[day, default: 0] += event.tokens.totalTokens
                 }
@@ -66,7 +66,7 @@ final class CodexUsageLogReader: CodexUsageSummaryReading, @unchecked Sendable {
             }
         }
 
-        let dailyUsage = (0..<7).reversed().map { offset -> DailyTokenUsage in
+        let dailyUsage = (0..<15).reversed().map { offset -> DailyTokenUsage in
             let date = calendar.date(byAdding: .day, value: -offset, to: todayStart) ?? todayStart
             return DailyTokenUsage(date: date, totalTokens: dailyTotals[date, default: 0])
         }
@@ -86,7 +86,7 @@ final class CodexUsageLogReader: CodexUsageSummaryReading, @unchecked Sendable {
         }
 
         let todayStart = calendar.startOfDay(for: referenceDate)
-        for offset in 0..<7 {
+        for offset in 0..<15 {
             guard
                 let date = calendar.date(byAdding: .day, value: -offset, to: todayStart),
                 let directory = dayDirectory(for: date)

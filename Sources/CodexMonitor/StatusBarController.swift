@@ -8,6 +8,7 @@ final class StatusBarController: NSObject {
     private let statusItem: NSStatusItem
     private let popover = NSPopover()
     private var cancellables = Set<AnyCancellable>()
+    private var preferredPopoverHeight = StatusPanelLayout.initialHeight
     private var statusSymbolCache: [String: NSImage] = [:]
     private let statusSymbolConfig = NSImage.SymbolConfiguration(
         pointSize: MenuBarDisplay.metricIconPointSize,
@@ -22,10 +23,18 @@ final class StatusBarController: NSObject {
         popover.behavior = .transient
         popover.animates = true
         popover.appearance = NSAppearance(named: .darkAqua)
-        popover.contentSize = NSSize(width: StatusPanelLayout.width, height: StatusPanelLayout.height)
+        popover.contentSize = NSSize(
+            width: StatusPanelLayout.width,
+            height: StatusPanelLayout.initialHeight
+        )
         popover.contentViewController = NSHostingController(
-            rootView: StatusPanelView(model: model)
-                .frame(width: StatusPanelLayout.width, height: StatusPanelLayout.height)
+            rootView: StatusPanelView(
+                model: model,
+                onPreferredHeightChange: { [weak self] height in
+                    self?.updatePopoverHeight(height)
+                }
+            )
+            .frame(width: StatusPanelLayout.width)
         )
 
         if let button = statusItem.button {
@@ -45,12 +54,31 @@ final class StatusBarController: NSObject {
         if popover.isShown {
             popover.performClose(sender)
         } else {
+            applyPreferredPopoverHeight(for: sender.window?.screen)
             popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
             if let window = popover.contentViewController?.view.window {
                 window.makeKey()
             }
             Task { await model.refresh() }
         }
+    }
+
+    private func updatePopoverHeight(_ preferredHeight: CGFloat) {
+        preferredPopoverHeight = preferredHeight
+        applyPreferredPopoverHeight(for: statusItem.button?.window?.screen)
+    }
+
+    private func applyPreferredPopoverHeight(for screen: NSScreen?) {
+        let visibleScreenHeight = screen?.visibleFrame.height
+            ?? NSScreen.main?.visibleFrame.height
+            ?? preferredPopoverHeight
+        let height = StatusPanelLayout.clampedHeight(
+            preferredPopoverHeight,
+            visibleScreenHeight: visibleScreenHeight
+        )
+
+        guard abs(popover.contentSize.height - height) > 0.5 else { return }
+        popover.contentSize = NSSize(width: StatusPanelLayout.width, height: height)
     }
 
     private func updateMenuBarButton(_ title: MenuBarTitle) {

@@ -60,7 +60,7 @@ struct CodexUsageSummary: Equatable {
 
     static func empty(referenceDate: Date = Date(), calendar: Calendar = .current) -> CodexUsageSummary {
         let todayStart = calendar.startOfDay(for: referenceDate)
-        let days = (0..<7).reversed().map { offset -> DailyTokenUsage in
+        let days = (0..<15).reversed().map { offset -> DailyTokenUsage in
             let date = calendar.date(byAdding: .day, value: -offset, to: todayStart) ?? todayStart
             return DailyTokenUsage(date: date, totalTokens: 0)
         }
@@ -137,21 +137,11 @@ extension RateLimitWindow {
 
     func compactResetText(relativeTo date: Date = Date()) -> String? {
         guard let resetDate else { return nil }
-
-        let seconds = max(0, Int(resetDate.timeIntervalSince(date)))
-        let minutes = max(1, Int(ceil(Double(seconds) / 60)))
-
-        if minutes < 60 {
-            return "\(minutes)m"
-        }
-
-        if windowDurationMins == 300 || minutes < 1_440 {
-            let hours = max(1, Int(ceil(Double(minutes) / 60)))
-            return "\(hours)h"
-        }
-
-        let days = max(1, Int(ceil(Double(minutes) / 1_440)))
-        return "\(days)d"
+        return ResetTimeFormatting.compactRemaining(
+            until: resetDate,
+            relativeTo: date,
+            prefersDays: windowDurationMins != 300
+        )
     }
 
     var displayName: String {
@@ -161,6 +151,64 @@ extension RateLimitWindow {
         if windowDurationMins % 1_440 == 0 { return "\(windowDurationMins / 1_440)d window" }
         if windowDurationMins % 60 == 0 { return "\(windowDurationMins / 60)h window" }
         return "\(windowDurationMins)m window"
+    }
+}
+
+enum ResetTimeFormatting {
+    static func compactRemaining(
+        until date: Date,
+        relativeTo referenceDate: Date = Date(),
+        prefersDays: Bool
+    ) -> String {
+        let seconds = remainingSeconds(until: date, relativeTo: referenceDate)
+        let minutes = roundedUpMinutes(from: seconds)
+
+        if seconds < 60 * 60 {
+            return "\(minutes)m"
+        }
+
+        if !prefersDays || seconds < 24 * 60 * 60 {
+            return "\(Int(ceil(Double(minutes) / 60)))h"
+        }
+
+        return "\(Int(ceil(Double(minutes) / 1_440)))d"
+    }
+
+    static func detailedRemaining(
+        until date: Date,
+        relativeTo referenceDate: Date = Date()
+    ) -> String {
+        let seconds = remainingSeconds(until: date, relativeTo: referenceDate)
+        let totalMinutes = roundedUpMinutes(from: seconds)
+
+        if seconds < 60 * 60 {
+            return "\(totalMinutes)m"
+        }
+
+        if seconds < 24 * 60 * 60 {
+            let hours = totalMinutes / 60
+            let minutes = totalMinutes % 60
+            return minutes == 0 ? "\(hours)h" : "\(hours)h \(minutes)m"
+        }
+
+        var days = totalMinutes / 1_440
+        let remainingMinutes = totalMinutes % 1_440
+        let roundedHours = Int(ceil(Double(remainingMinutes) / 60))
+
+        if roundedHours == 24 {
+            days += 1
+            return "\(days)d"
+        }
+
+        return roundedHours == 0 ? "\(days)d" : "\(days)d \(roundedHours)h"
+    }
+
+    private static func remainingSeconds(until date: Date, relativeTo referenceDate: Date) -> TimeInterval {
+        max(0, date.timeIntervalSince(referenceDate))
+    }
+
+    private static func roundedUpMinutes(from seconds: TimeInterval) -> Int {
+        return max(1, Int(ceil(seconds / 60)))
     }
 }
 
