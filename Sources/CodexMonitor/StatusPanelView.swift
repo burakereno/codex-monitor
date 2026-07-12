@@ -1464,24 +1464,34 @@ private struct SegmentedUsageBarView: View {
     let tint: Color
 
     private let segmentCount = 7
+    private let segmentHeight: CGFloat = 6
 
     var body: some View {
         HStack(spacing: 3) {
             ForEach(0..<segmentCount, id: \.self) { index in
                 GeometryReader { geometry in
-                    ZStack(alignment: .leading) {
-                        Capsule()
-                            .fill(Color.primary.opacity(0.08))
+                    let ratio = fillRatio(for: index)
 
-                        Capsule()
-                            .fill(tint)
-                            .frame(width: geometry.size.width * fillRatio(for: index))
-                    }
+                    Capsule()
+                        .fill(ratio >= 1 ? tint : Color.primary.opacity(0.08))
+                        .overlay(alignment: .leading) {
+                            if ratio > 0, ratio < 1 {
+                                Capsule()
+                                    .fill(tint)
+                                    .frame(
+                                        width: min(
+                                            geometry.size.width,
+                                            max(segmentHeight, geometry.size.width * ratio)
+                                        )
+                                    )
+                            }
+                        }
+                        .clipShape(Capsule())
                 }
-                .frame(height: 6)
+                .frame(height: segmentHeight)
             }
         }
-        .frame(height: 6)
+        .frame(height: segmentHeight)
     }
 
     private func fillRatio(for index: Int) -> Double {
