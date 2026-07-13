@@ -450,6 +450,55 @@ final class CodexMonitorModelTests: XCTestCase {
         )
     }
 
+    func testCodexWindowNormalizationMovesWeeklyOnlyPrimaryToSecondary() {
+        let snapshot = RateLimitsSnapshot(
+            limitId: "codex",
+            limitName: "Codex",
+            primary: RateLimitWindow(usedPercent: 2, resetsAt: 1_784_487_927, windowDurationMins: 10_080),
+            secondary: nil,
+            credits: nil,
+            planType: "prolite",
+            rateLimitReachedType: nil
+        )
+
+        let normalized = snapshot.normalizedCodexWindows
+
+        XCTAssertNil(normalized.primary)
+        XCTAssertEqual(normalized.secondary?.usedPercent, 2)
+        XCTAssertEqual(normalized.secondary?.resetsAt, 1_784_487_927)
+        XCTAssertEqual(normalized.secondary?.windowDurationMins, 10_080)
+    }
+
+    func testCodexWindowNormalizationKeepsStandardWindowOrder() {
+        let snapshot = Self.snapshot(usedPercent: 25, secondaryUsedPercent: 10)
+
+        let normalized = snapshot.normalizedCodexWindows
+
+        XCTAssertEqual(normalized.primary?.usedPercent, 25)
+        XCTAssertEqual(normalized.primary?.windowDurationMins, 300)
+        XCTAssertEqual(normalized.secondary?.usedPercent, 10)
+        XCTAssertEqual(normalized.secondary?.windowDurationMins, 10_080)
+    }
+
+    func testCodexWindowNormalizationRepairsReversedWindowOrder() {
+        let snapshot = RateLimitsSnapshot(
+            limitId: "codex",
+            limitName: "Codex",
+            primary: RateLimitWindow(usedPercent: 10, resetsAt: nil, windowDurationMins: 10_080),
+            secondary: RateLimitWindow(usedPercent: 25, resetsAt: nil, windowDurationMins: 300),
+            credits: nil,
+            planType: nil,
+            rateLimitReachedType: nil
+        )
+
+        let normalized = snapshot.normalizedCodexWindows
+
+        XCTAssertEqual(normalized.primary?.usedPercent, 25)
+        XCTAssertEqual(normalized.primary?.windowDurationMins, 300)
+        XCTAssertEqual(normalized.secondary?.usedPercent, 10)
+        XCTAssertEqual(normalized.secondary?.windowDurationMins, 10_080)
+    }
+
     func testBinaryLocatorFindsCodexInsideResolvedApplicationBundle() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("CodexBinaryLocatorTests-\(UUID().uuidString)")

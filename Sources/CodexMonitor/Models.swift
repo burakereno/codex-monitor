@@ -27,6 +27,40 @@ struct RateLimitWindow: Decodable {
     let windowDurationMins: Int?
 }
 
+extension RateLimitsSnapshot {
+    private static let fiveHourWindowDurationMins = 300
+    private static let weeklyWindowDurationMins = 10_080
+
+    var normalizedCodexWindows: RateLimitsSnapshot {
+        let windows: (primary: RateLimitWindow?, secondary: RateLimitWindow?)
+
+        if primary?.windowDurationMins == Self.weeklyWindowDurationMins {
+            if secondary?.windowDurationMins == Self.fiveHourWindowDurationMins {
+                windows = (secondary, primary)
+            } else if secondary == nil {
+                windows = (nil, primary)
+            } else {
+                return self
+            }
+        } else if primary == nil,
+                  secondary?.windowDurationMins == Self.fiveHourWindowDurationMins {
+            windows = (secondary, nil)
+        } else {
+            return self
+        }
+
+        return RateLimitsSnapshot(
+            limitId: limitId,
+            limitName: limitName,
+            primary: windows.primary,
+            secondary: windows.secondary,
+            credits: credits,
+            planType: planType,
+            rateLimitReachedType: rateLimitReachedType
+        )
+    }
+}
+
 struct CreditsSnapshot: Decodable {
     let balance: String?
     let hasCredits: Bool

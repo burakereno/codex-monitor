@@ -395,7 +395,8 @@ final class CodexAppServerClient: CodexAccountReading, @unchecked Sendable {
 
         let data = try JSONSerialization.data(withJSONObject: result)
         let decoded = try decoder.decode(RateLimitsResponse.self, from: data)
-        let rateLimits = decoded.rateLimitsByLimitId?["codex"] ?? decoded.rateLimits
+        let rateLimits = (decoded.rateLimitsByLimitId?["codex"] ?? decoded.rateLimits)
+            .normalizedCodexWindows
         return CodexAccountSnapshot(
             rateLimits: rateLimits,
             rateLimitResetCredits: decoded.rateLimitResetCredits
