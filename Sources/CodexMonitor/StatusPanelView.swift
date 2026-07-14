@@ -583,6 +583,11 @@ private struct ProviderUsageSectionView<Accessory: View>: View {
 private struct RateLimitResetCreditsCardView: View {
     let summary: RateLimitResetCreditsSummary
 
+    private let columns = Array(
+        repeating: GridItem(.flexible(minimum: 0), spacing: 6),
+        count: 3
+    )
+
     private var credits: [RateLimitResetCredit] {
         summary.credits ?? []
     }
@@ -612,7 +617,7 @@ private struct RateLimitResetCreditsCardView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                HStack(spacing: 6) {
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 6) {
                     ForEach(credits) { credit in
                         RateLimitResetCreditTagView(credit: credit)
                     }
@@ -633,9 +638,9 @@ private struct RateLimitResetCreditTagView: View {
         expirationText
             .font(.system(size: 10, weight: .semibold))
             .lineLimit(1)
-            .minimumScaleFactor(0.8)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
+            .frame(maxWidth: .infinity)
             .background {
                 Capsule()
                     .fill(Color.green.opacity(0.09))
