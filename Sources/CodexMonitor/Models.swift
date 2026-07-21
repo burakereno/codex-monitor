@@ -6,6 +6,10 @@ struct RateLimitsResponse: Decodable {
     let rateLimitResetCredits: RateLimitResetCreditsSummary?
 }
 
+struct RateLimitsUpdatedNotification: Decodable {
+    let rateLimits: RateLimitsSnapshot
+}
+
 struct CodexAccountSnapshot {
     let rateLimits: RateLimitsSnapshot
     let rateLimitResetCredits: RateLimitResetCreditsSummary?
@@ -57,6 +61,19 @@ extension RateLimitsSnapshot {
             credits: credits,
             planType: planType,
             rateLimitReachedType: rateLimitReachedType
+        )
+    }
+
+    func mergingSparseUpdate(_ update: RateLimitsSnapshot) -> RateLimitsSnapshot {
+        let normalized = update.normalizedCodexWindows
+        return RateLimitsSnapshot(
+            limitId: normalized.limitId ?? limitId,
+            limitName: normalized.limitName ?? limitName,
+            primary: normalized.primary ?? primary,
+            secondary: normalized.secondary ?? secondary,
+            credits: normalized.credits ?? credits,
+            planType: normalized.planType ?? planType,
+            rateLimitReachedType: normalized.rateLimitReachedType ?? rateLimitReachedType
         )
     }
 }

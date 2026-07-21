@@ -15,7 +15,9 @@ final class CodexMonitorModel: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     private var rateLimitEventTask: Task<Void, Never>?
     private var isRefreshingRateLimits = false
+    private var isRefreshingUsage = false
     private var rateLimitRefreshRequested = false
+    private var rateLimitRevision = 0
 
     init(
         codexClient: CodexAccountReading = CodexAppServerClient(),
@@ -48,9 +50,9 @@ final class CodexMonitorModel: ObservableObject {
 
             while !Task.isCancelled {
                 let events = await codexClient.rateLimitUpdateEvents()
-                for await _ in events {
+                for await snapshot in events {
                     guard !Task.isCancelled else { return }
-                    await refreshRateLimits()
+                    publishRateLimitUpdate(snapshot)
                 }
 
                 do {
@@ -76,9 +78,9 @@ final class CodexMonitorModel: ObservableObject {
         }
 
         isRefreshing = true
-        defer { isRefreshing = false }
-
-        await refreshCodex()
+        await refreshRateLimits()
+        isRefreshing = false
+        await refreshUsageSummary()
     }
 
     func updateMenuBarTitleForDisplayModeChange() {
@@ -129,11 +131,6 @@ final class CodexMonitorModel: ObservableObject {
         MenuBarResetTimePreference.showsResetTimes
     }
 
-    private func refreshCodex() async {
-        await refreshRateLimits()
-        await refreshUsageSummary()
-    }
-
     private func refreshRateLimits() async {
         guard !isRefreshingRateLimits else {
             rateLimitRefreshRequested = true
@@ -149,19 +146,36 @@ final class CodexMonitorModel: ObservableObject {
     }
 
     private func performRateLimitRead() async {
+        let revisionAtStart = rateLimitRevision
         do {
             if let next = try await readConfirmedRateLimits() {
-                codexSnapshot = next.rateLimits
+                if rateLimitRevision == revisionAtStart {
+                    codexSnapshot = next.rateLimits
+                }
                 rateLimitResetCredits = next.rateLimitResetCredits
                 codexMessage = nil
                 lastUpdated = Date()
             }
         } catch {
-            codexSnapshot = nil
-            rateLimitResetCredits = nil
-            codexMessage = error.localizedDescription
+            if rateLimitRevision == revisionAtStart {
+                codexSnapshot = nil
+                rateLimitResetCredits = nil
+                codexMessage = error.localizedDescription
+            }
         }
 
+        updateMenuBarTitleForDisplayModeChange()
+    }
+
+    private func publishRateLimitUpdate(_ update: RateLimitsSnapshot) {
+        rateLimitRevision &+= 1
+        if let codexSnapshot {
+            self.codexSnapshot = codexSnapshot.mergingSparseUpdate(update)
+        } else {
+            codexSnapshot = update.normalizedCodexWindows
+        }
+        codexMessage = nil
+        lastUpdated = Date()
         updateMenuBarTitleForDisplayModeChange()
     }
 
@@ -267,6 +281,10 @@ final class CodexMonitorModel: ObservableObject {
     }
 
     private func refreshUsageSummary() async {
+        guard !isRefreshingUsage else { return }
+        isRefreshingUsage = true
+        defer { isRefreshingUsage = false }
+
         do {
             codexUsageSummary = try await codexUsageReader.readUsageSummary(referenceDate: Date())
         } catch {

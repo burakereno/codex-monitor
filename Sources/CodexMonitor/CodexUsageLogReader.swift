@@ -4,9 +4,11 @@ protocol CodexUsageSummaryReading: Sendable {
     func readUsageSummary(referenceDate: Date) async throws -> CodexUsageSummary
 }
 
-final class CodexUsageLogReader: CodexUsageSummaryReading, @unchecked Sendable {
+actor CodexUsageLogReader: CodexUsageSummaryReading {
     private let rootURL: URL
     private let calendar: Calendar
+    private let iso8601FormatStyle = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
+    private var fileCache: [URL: CachedFileUsage] = [:]
 
     init(
         rootURL: URL = FileManager.default.homeDirectoryForCurrentUser
@@ -19,28 +21,19 @@ final class CodexUsageLogReader: CodexUsageSummaryReading, @unchecked Sendable {
     }
 
     func readUsageSummary(referenceDate: Date = Date()) async throws -> CodexUsageSummary {
-        try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .utility).async {
-                do {
-                    continuation.resume(returning: try self.readUsageSummarySync(referenceDate: referenceDate))
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-            }
-        }
-    }
-
-    private func readUsageSummarySync(referenceDate: Date) throws -> CodexUsageSummary {
         let files = sessionFiles(referenceDate: referenceDate)
         guard !files.isEmpty else {
+            fileCache.removeAll()
             return .empty(referenceDate: referenceDate, calendar: calendar)
         }
+
+        let activeFiles = Set(files)
+        fileCache = fileCache.filter { activeFiles.contains($0.key) }
 
         let todayStart = calendar.startOfDay(for: referenceDate)
         let tomorrowStart = calendar.date(byAdding: .day, value: 1, to: todayStart) ?? referenceDate
         let fifteenDayStart = calendar.date(byAdding: .day, value: -14, to: todayStart) ?? todayStart
         let monthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: referenceDate)) ?? todayStart
-        let nextMonthStart = calendar.date(byAdding: .month, value: 1, to: monthStart) ?? tomorrowStart
 
         var dailyTotals: [Date: Int] = [:]
         var todayTotals = TokenUsageTotals.zero
@@ -48,20 +41,31 @@ final class CodexUsageLogReader: CodexUsageSummaryReading, @unchecked Sendable {
         var modelTotals: [String: Int] = [:]
 
         for file in files {
-            let fileEvents = try tokenEvents(in: file)
-            for event in fileEvents {
-                if event.timestamp >= fifteenDayStart && event.timestamp < tomorrowStart {
-                    let day = calendar.startOfDay(for: event.timestamp)
-                    dailyTotals[day, default: 0] += event.tokens.totalTokens
-                }
+            let fingerprint = try fileFingerprint(for: file)
+            let usage: FileUsageContribution
+            if let cached = fileCache[file], cached.fingerprint == fingerprint {
+                usage = cached.usage
+            } else {
+                usage = try fileUsage(in: file)
+                fileCache[file] = CachedFileUsage(fingerprint: fingerprint, usage: usage)
+            }
 
-                if event.timestamp >= todayStart && event.timestamp < tomorrowStart {
-                    todayTotals.add(event.tokens)
-                }
+            for (day, totals) in usage.totalsByDay
+                where day >= fifteenDayStart && day < tomorrowStart {
+                dailyTotals[day, default: 0] += totals.totalTokens
+            }
 
-                if event.timestamp >= monthStart && event.timestamp < nextMonthStart {
-                    monthTotals.add(event.tokens)
-                    modelTotals[event.model, default: 0] += event.tokens.totalTokens
+            if let totals = usage.totalsByDay[todayStart] {
+                todayTotals.add(totals)
+            }
+
+            if let totals = usage.totalsByMonth[monthStart] {
+                monthTotals.add(totals)
+            }
+
+            if let fileModelTotals = usage.modelTotalsByMonth[monthStart] {
+                for (model, total) in fileModelTotals {
+                    modelTotals[model, default: 0] += total
                 }
             }
         }
@@ -139,15 +143,22 @@ final class CodexUsageLogReader: CodexUsageSummaryReading, @unchecked Sendable {
             .appendingPathComponent(String(format: "%02d", day))
     }
 
-    private func tokenEvents(in file: URL) throws -> [CodexTokenEvent] {
-        let content = try String(contentsOf: file, encoding: .utf8)
+    private func fileFingerprint(for file: URL) throws -> FileFingerprint {
+        let values = try file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        return FileFingerprint(
+            size: values.fileSize ?? 0,
+            modificationDate: values.contentModificationDate
+        )
+    }
+
+    private func fileUsage(in file: URL) throws -> FileUsageContribution {
         let decoder = sessionLogDecoder()
         var model = "unknown"
-        var events: [CodexTokenEvent] = []
+        var usage = FileUsageContribution()
 
-        for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
-            guard let data = String(line).data(using: .utf8) else { continue }
-            guard let entry = try? decoder.decode(CodexSessionLogEntry.self, from: data) else { continue }
+        try forEachLine(in: file) { line in
+            guard !line.isEmpty else { return }
+            guard let entry = try? decoder.decode(CodexSessionLogEntry.self, from: line) else { return }
 
             if let entryModel = modelName(from: entry.payload) {
                 model = entryModel
@@ -157,15 +168,47 @@ final class CodexUsageLogReader: CodexUsageSummaryReading, @unchecked Sendable {
                 entry.type == "event_msg",
                 entry.payload?.type == "token_count",
                 let timestamp = entry.timestamp,
-                let usage = entry.payload?.info?.lastTokenUsage
+                let tokenUsage = entry.payload?.info?.lastTokenUsage
             else {
-                continue
+                return
             }
 
-            events.append(CodexTokenEvent(timestamp: timestamp, model: model, tokens: usage.totals))
+            let totals = tokenUsage.totals
+            let day = calendar.startOfDay(for: timestamp)
+            let month = calendar.date(
+                from: calendar.dateComponents([.year, .month], from: timestamp)
+            ) ?? day
+            usage.totalsByDay[day, default: .zero].add(totals)
+            usage.totalsByMonth[month, default: .zero].add(totals)
+            usage.modelTotalsByMonth[month, default: [:]][model, default: 0] += totals.totalTokens
         }
 
-        return events
+        return usage
+    }
+
+    private func forEachLine(in file: URL, body: (Data) -> Void) throws {
+        let handle = try FileHandle(forReadingFrom: file)
+        defer { try? handle.close() }
+
+        var buffer = Data()
+        while let chunk = try handle.read(upToCount: 1_048_576), !chunk.isEmpty {
+            buffer.append(chunk)
+            var lineStart = buffer.startIndex
+
+            while lineStart < buffer.endIndex,
+                  let newline = buffer[lineStart...].firstIndex(of: 0x0a) {
+                body(Data(buffer[lineStart..<newline]))
+                lineStart = buffer.index(after: newline)
+            }
+
+            if lineStart > buffer.startIndex {
+                buffer.removeSubrange(buffer.startIndex..<lineStart)
+            }
+        }
+
+        if !buffer.isEmpty {
+            body(buffer)
+        }
     }
 
     private func modelName(from payload: CodexSessionLogPayload?) -> String? {
@@ -188,7 +231,7 @@ final class CodexUsageLogReader: CodexUsageSummaryReading, @unchecked Sendable {
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
             let value = try container.decode(String.self)
-            if let date = CodexUsageLogReader.iso8601Formatter.date(from: value) {
+            if let date = try? Date(value, strategy: self.iso8601FormatStyle) {
                 return date
             }
             throw DecodingError.dataCorruptedError(
@@ -220,11 +263,22 @@ final class CodexUsageLogReader: CodexUsageSummaryReading, @unchecked Sendable {
             }
     }
 
-    private static let iso8601Formatter: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
+}
+
+private struct FileFingerprint: Equatable {
+    let size: Int
+    let modificationDate: Date?
+}
+
+private struct CachedFileUsage {
+    let fingerprint: FileFingerprint
+    let usage: FileUsageContribution
+}
+
+private struct FileUsageContribution {
+    var totalsByDay: [Date: TokenUsageTotals] = [:]
+    var totalsByMonth: [Date: TokenUsageTotals] = [:]
+    var modelTotalsByMonth: [Date: [String: Int]] = [:]
 }
 
 private struct CodexSessionLogEntry: Decodable {
@@ -268,10 +322,4 @@ private struct CodexSessionTokenUsage: Decodable {
             totalTokens: totalTokens
         )
     }
-}
-
-private struct CodexTokenEvent {
-    let timestamp: Date
-    let model: String
-    let tokens: TokenUsageTotals
 }

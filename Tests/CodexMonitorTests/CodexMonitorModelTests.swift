@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import CodexMonitor
 
@@ -181,6 +182,7 @@ final class CodexMonitorModelTests: XCTestCase {
 
         XCTAssertEqual(model.codexSnapshot?.primary?.remainingPercent, 75)
         XCTAssertEqual(model.menuBarTitle.providers.first?.primary, "75%")
+        XCTAssertFalse(model.isRefreshing)
 
         usageReader.finish()
         await refreshTask.value
@@ -340,53 +342,65 @@ final class CodexMonitorModelTests: XCTestCase {
         XCTAssertEqual(model.rateLimitResetCredits, summary)
     }
 
-    func testRateLimitEventRefreshesSnapshotAndMenuBarTitle() async {
+    func testRateLimitEventPublishesSnapshotWithoutAnotherRead() async {
         let eventStreamRequested = expectation(description: "Rate-limit event stream requested")
         let rateLimitReads = expectation(description: "Rate limits read")
-        rateLimitReads.expectedFulfillmentCount = 2
         let reader = MockRateLimitsReader(
             results: [
-                .success(Self.accountSnapshot(usedPercent: 25)),
-                .success(Self.accountSnapshot(usedPercent: 89))
+                .success(Self.accountSnapshot(usedPercent: 25))
             ],
             eventStreamRequested: eventStreamRequested,
             rateLimitRead: rateLimitReads
         )
         let model = CodexMonitorModel(codexClient: reader, codexUsageReader: MockUsageSummaryReader())
         defer { model.stop() }
+        let eventPublished = expectation(description: "Rate-limit event published")
+        var cancellable: AnyCancellable?
+        cancellable = model.$codexSnapshot.sink { snapshot in
+            if snapshot?.primary?.remainingPercent == 11 {
+                eventPublished.fulfill()
+            }
+        }
+        defer { cancellable?.cancel() }
 
         model.start()
-        await fulfillment(of: [eventStreamRequested], timeout: 1)
-        await reader.emitRateLimitUpdate()
-        await fulfillment(of: [rateLimitReads], timeout: 1)
+        await fulfillment(of: [eventStreamRequested, rateLimitReads], timeout: 1)
+        await reader.emitRateLimitUpdate(Self.snapshot(usedPercent: 89))
+        await fulfillment(of: [eventPublished], timeout: 1)
 
         XCTAssertEqual(model.codexSnapshot?.primary?.remainingPercent, 11)
         XCTAssertEqual(model.menuBarTitle.providers.first?.primary, "11%")
+        let readCount = await reader.rateLimitReadCount
+        XCTAssertEqual(readCount, 1)
     }
 
-    func testRateLimitEventQueuesRefreshWhileAnotherReadIsInFlight() async {
+    func testRateLimitEventWinsOverOlderReadAlreadyInFlight() async {
         let eventStreamRequested = expectation(description: "Rate-limit event stream requested")
         let firstReadStarted = expectation(description: "First rate-limit read started")
-        let rateLimitReads = expectation(description: "Rate limits read")
-        rateLimitReads.expectedFulfillmentCount = 2
         let reader = MockRateLimitsReader(
             results: [
-                .success(Self.accountSnapshot(usedPercent: 25)),
-                .success(Self.accountSnapshot(usedPercent: 89))
+                .success(Self.accountSnapshot(usedPercent: 25))
             ],
             eventStreamRequested: eventStreamRequested,
-            rateLimitRead: rateLimitReads,
             firstReadStarted: firstReadStarted
         )
         let model = CodexMonitorModel(codexClient: reader, codexUsageReader: MockUsageSummaryReader())
         defer { model.stop() }
+        let eventPublished = expectation(description: "Rate-limit event published")
+        var cancellable: AnyCancellable?
+        cancellable = model.$codexSnapshot.sink { snapshot in
+            if snapshot?.primary?.remainingPercent == 11 {
+                eventPublished.fulfill()
+            }
+        }
+        defer { cancellable?.cancel() }
 
         model.start()
         await fulfillment(of: [eventStreamRequested, firstReadStarted], timeout: 1)
-        await reader.emitRateLimitUpdate()
-        try? await Task.sleep(for: .milliseconds(50))
+        await reader.emitRateLimitUpdate(Self.snapshot(usedPercent: 89))
+        await fulfillment(of: [eventPublished], timeout: 1)
         await reader.resumeFirstRead()
-        await fulfillment(of: [rateLimitReads], timeout: 1)
+        await Task.yield()
 
         XCTAssertEqual(model.codexSnapshot?.primary?.remainingPercent, 11)
         XCTAssertEqual(model.menuBarTitle.providers.first?.primary, "11%")
@@ -524,6 +538,49 @@ final class CodexMonitorModelTests: XCTestCase {
         XCTAssertEqual(try locator.locate(), binaryURL)
     }
 
+    func testAppServerClientReusesConnectionForRateLimitReads() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CodexAppServerConnectionTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let serverURL = rootURL.appendingPathComponent("fake-codex")
+        let script = """
+        #!/bin/sh
+        read_count=0
+        while IFS= read -r line; do
+          case "$line" in
+            *rateLimits*read*)
+              read_count=$((read_count + 1))
+              request_id=$(printf '%s' "$line" | sed -E 's/.*"id":([0-9]+).*/\\1/')
+              used_percent=$((read_count * 10))
+              printf '{"id":%s,"result":{"rateLimits":{"primary":{"usedPercent":%s,"windowDurationMins":300}}}}\\n' "$request_id" "$used_percent"
+              ;;
+            *initialize*)
+              printf '{"id":1,"result":{}}\\n'
+              ;;
+          esac
+        done
+        """
+        try script.write(to: serverURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: serverURL.path
+        )
+
+        let locator = CodexBinaryLocator(
+            applicationURLProvider: { nil },
+            fallbackPaths: [serverURL.path]
+        )
+        let client = CodexAppServerClient(binaryLocator: locator)
+
+        let first = try await client.readRateLimits()
+        let second = try await client.readRateLimits()
+
+        XCTAssertEqual(first.rateLimits.primary?.usedPercent, 10)
+        XCTAssertEqual(second.rateLimits.primary?.usedPercent, 20)
+    }
+
     private static func snapshot(
         usedPercent: Int,
         secondaryUsedPercent: Int = 10,
@@ -580,10 +637,11 @@ private actor MockRateLimitsReader: CodexAccountReading {
     private let eventStreamRequested: XCTestExpectation?
     private let rateLimitRead: XCTestExpectation?
     private let firstReadStarted: XCTestExpectation?
-    private let eventStream: AsyncStream<Void>
-    private let eventContinuation: AsyncStream<Void>.Continuation
+    private let eventStream: AsyncStream<RateLimitsSnapshot>
+    private let eventContinuation: AsyncStream<RateLimitsSnapshot>.Continuation
     private var firstReadContinuation: CheckedContinuation<Void, Never>?
     private var shouldSuspendFirstRead: Bool
+    private(set) var rateLimitReadCount = 0
 
     init(
         results: [Result<CodexAccountSnapshot, Error>],
@@ -597,12 +655,13 @@ private actor MockRateLimitsReader: CodexAccountReading {
         self.firstReadStarted = firstReadStarted
         self.shouldSuspendFirstRead = firstReadStarted != nil
 
-        var continuation: AsyncStream<Void>.Continuation!
+        var continuation: AsyncStream<RateLimitsSnapshot>.Continuation!
         self.eventStream = AsyncStream { continuation = $0 }
         self.eventContinuation = continuation
     }
 
     func readRateLimits() async throws -> CodexAccountSnapshot {
+        rateLimitReadCount += 1
         rateLimitRead?.fulfill()
         if let firstReadStarted, shouldSuspendFirstRead {
             shouldSuspendFirstRead = false
@@ -615,13 +674,13 @@ private actor MockRateLimitsReader: CodexAccountReading {
         return try result.get()
     }
 
-    func rateLimitUpdateEvents() async -> AsyncStream<Void> {
+    func rateLimitUpdateEvents() async -> AsyncStream<RateLimitsSnapshot> {
         eventStreamRequested?.fulfill()
         return eventStream
     }
 
-    func emitRateLimitUpdate() {
-        eventContinuation.yield(())
+    func emitRateLimitUpdate(_ snapshot: RateLimitsSnapshot) {
+        eventContinuation.yield(snapshot)
     }
 
     func resumeFirstRead() {
@@ -752,6 +811,58 @@ final class CodexUsageLogReaderTests: XCTestCase {
         XCTAssertEqual(summary.modelBreakdown.first?.percentage, 67)
         XCTAssertEqual(summary.modelBreakdown.last?.model, "gpt-5.4")
         XCTAssertEqual(summary.modelBreakdown.last?.percentage, 33)
+    }
+
+    func testReaderInvalidatesChangedFileAndReusesStableSummary() async throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CodexMonitorUsageCacheTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let referenceDate = try XCTUnwrap(
+            calendar.date(from: DateComponents(year: 2026, month: 7, day: 9, hour: 12))
+        )
+        let firstEvent = tokenLine(
+            timestamp: "2026-07-09T08:00:00.000Z",
+            input: 100,
+            cache: 10,
+            output: 20,
+            reasoning: 5,
+            total: 120
+        )
+        let secondEvent = tokenLine(
+            timestamp: "2026-07-09T09:00:00.000Z",
+            input: 200,
+            cache: 20,
+            output: 40,
+            reasoning: 10,
+            total: 240
+        )
+        try writeLog(
+            rootURL: rootURL,
+            year: "2026",
+            month: "07",
+            day: "09",
+            name: "active.jsonl",
+            lines: [turnContextLine(model: "gpt-5.6-sol"), firstEvent]
+        )
+        let reader = CodexUsageLogReader(rootURL: rootURL, calendar: calendar)
+
+        let initial = try await reader.readUsageSummary(referenceDate: referenceDate)
+        try writeLog(
+            rootURL: rootURL,
+            year: "2026",
+            month: "07",
+            day: "09",
+            name: "active.jsonl",
+            lines: [turnContextLine(model: "gpt-5.6-sol"), firstEvent, secondEvent]
+        )
+        let updated = try await reader.readUsageSummary(referenceDate: referenceDate)
+        let unchanged = try await reader.readUsageSummary(referenceDate: referenceDate)
+
+        XCTAssertEqual(initial.today.totalTokens, 120)
+        XCTAssertEqual(updated.today.totalTokens, 360)
+        XCTAssertEqual(unchanged, updated)
     }
 
     private func writeLog(
