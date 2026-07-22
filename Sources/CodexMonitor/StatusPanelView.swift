@@ -712,6 +712,21 @@ private struct DailyUsageCardView: View {
     }
 }
 
+enum DailyUsageBarMetrics {
+    static let plotHeight: CGFloat = 58
+    static let maximumHeight: CGFloat = 54
+    static let minimumNonzeroHeight: CGFloat = 4
+    static let zeroHeight: CGFloat = 3
+
+    static func height(for totalTokens: Int, relativeTo maxTokens: Int) -> CGFloat {
+        guard totalTokens > 0 else { return zeroHeight }
+        guard maxTokens > 0 else { return minimumNonzeroHeight }
+
+        let ratio = min(max(CGFloat(totalTokens) / CGFloat(maxTokens), 0), 1)
+        return max(minimumNonzeroHeight, ratio * maximumHeight)
+    }
+}
+
 private struct DailyUsageBarView: View {
     let day: DailyTokenUsage
     let maxTokens: Int
@@ -724,7 +739,7 @@ private struct DailyUsageBarView: View {
     }
 
     private var barHeight: CGFloat {
-        day.totalTokens == 0 ? 5 : CGFloat(10 + ratio * 30)
+        DailyUsageBarMetrics.height(for: day.totalTokens, relativeTo: maxTokens)
     }
 
     private var isMonday: Bool {
@@ -737,7 +752,7 @@ private struct DailyUsageBarView: View {
                 .fill(barColor)
                 .frame(height: barHeight)
                 .frame(maxWidth: .infinity)
-                .frame(height: 58, alignment: .bottom)
+                .frame(height: DailyUsageBarMetrics.plotHeight, alignment: .bottom)
                 .overlay(alignment: .bottom) {
                     if isHovered {
                         Text("\(day.totalTokens.formatted()) tokens")
@@ -772,7 +787,7 @@ private struct DailyUsageBarView: View {
             if isMonday {
                 Rectangle()
                     .fill(Color.primary.opacity(0.10))
-                    .frame(width: 0.5, height: 58)
+                    .frame(width: 0.5, height: DailyUsageBarMetrics.plotHeight)
                     .frame(maxHeight: .infinity, alignment: .top)
                     .offset(x: -2)
                     .accessibilityHidden(true)
