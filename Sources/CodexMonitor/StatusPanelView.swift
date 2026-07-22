@@ -679,8 +679,8 @@ private struct RateLimitResetCreditTagView: View {
 private struct DailyUsageCardView: View {
     let days: [DailyTokenUsage]
 
-    private var maxTokens: Int {
-        max(days.map(\.totalTokens).max() ?? 0, 1)
+    private var scale: DailyUsageBarScale {
+        DailyUsageBarScale(tokenCounts: days.map(\.totalTokens))
     }
 
     var body: some View {
@@ -695,7 +695,7 @@ private struct DailyUsageCardView: View {
                 ForEach(days) { day in
                     DailyUsageBarView(
                         day: day,
-                        maxTokens: maxTokens,
+                        scale: scale,
                         tooltipHorizontalOffset: tooltipHorizontalOffset(for: day)
                     )
                 }
@@ -712,11 +712,50 @@ private struct DailyUsageCardView: View {
     }
 }
 
+struct DailyUsageBarScale: Equatable {
+    static let isolatedOutlierMultiplier = 2.5
+    static let displayHeadroomMultiplier = 1.2
+
+    let displayMaximumTokens: Int
+    let hasCappedOutlier: Bool
+
+    init(tokenCounts: [Int]) {
+        let positiveCounts = tokenCounts.filter { $0 > 0 }.sorted(by: >)
+        guard let actualMaximum = positiveCounts.first else {
+            displayMaximumTokens = 1
+            hasCappedOutlier = false
+            return
+        }
+
+        guard positiveCounts.count > 1 else {
+            displayMaximumTokens = actualMaximum
+            hasCappedOutlier = false
+            return
+        }
+
+        let secondHighest = positiveCounts[1]
+        hasCappedOutlier = Double(actualMaximum) > Double(secondHighest) * Self.isolatedOutlierMultiplier
+
+        if hasCappedOutlier {
+            displayMaximumTokens = max(
+                Int(ceil(Double(secondHighest) * Self.displayHeadroomMultiplier)),
+                1
+            )
+        } else {
+            displayMaximumTokens = actualMaximum
+        }
+    }
+
+    func isCapped(_ tokenCount: Int) -> Bool {
+        hasCappedOutlier && tokenCount > displayMaximumTokens
+    }
+}
+
 enum DailyUsageBarMetrics {
     static let plotHeight: CGFloat = 58
     static let maximumHeight: CGFloat = 54
-    static let minimumNonzeroHeight: CGFloat = 4
-    static let zeroHeight: CGFloat = 3
+    static let minimumNonzeroHeight: CGFloat = 2
+    static let zeroHeight: CGFloat = 2
 
     static func height(for totalTokens: Int, relativeTo maxTokens: Int) -> CGFloat {
         guard totalTokens > 0 else { return zeroHeight }
@@ -729,17 +768,23 @@ enum DailyUsageBarMetrics {
 
 private struct DailyUsageBarView: View {
     let day: DailyTokenUsage
-    let maxTokens: Int
+    let scale: DailyUsageBarScale
     let tooltipHorizontalOffset: CGFloat
     @State private var isHovered = false
 
     private var ratio: Double {
-        guard maxTokens > 0 else { return 0 }
-        return min(max(Double(day.totalTokens) / Double(maxTokens), 0), 1)
+        min(max(Double(day.totalTokens) / Double(scale.displayMaximumTokens), 0), 1)
+    }
+
+    private var isCapped: Bool {
+        scale.isCapped(day.totalTokens)
     }
 
     private var barHeight: CGFloat {
-        DailyUsageBarMetrics.height(for: day.totalTokens, relativeTo: maxTokens)
+        DailyUsageBarMetrics.height(
+            for: day.totalTokens,
+            relativeTo: scale.displayMaximumTokens
+        )
     }
 
     private var isMonday: Bool {
@@ -752,6 +797,18 @@ private struct DailyUsageBarView: View {
                 .fill(barColor)
                 .frame(height: barHeight)
                 .frame(maxWidth: .infinity)
+                .overlay(alignment: .top) {
+                    if isCapped {
+                        DailyUsageScaleBreakShape()
+                            .stroke(
+                                Color.black.opacity(0.48),
+                                style: StrokeStyle(lineWidth: 1.5, lineCap: .round)
+                            )
+                            .frame(width: 12, height: 7)
+                            .padding(.top, 5)
+                            .accessibilityHidden(true)
+                    }
+                }
                 .frame(height: DailyUsageBarMetrics.plotHeight, alignment: .bottom)
                 .overlay(alignment: .bottom) {
                     if isHovered {
@@ -800,13 +857,33 @@ private struct DailyUsageBarView: View {
         .zIndex(isHovered ? 1 : 0)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(day.date.formatted(date: .complete, time: .omitted))
-        .accessibilityValue("\(day.totalTokens.formatted()) tokens")
+        .accessibilityValue(accessibilityValue)
     }
 
     private var barColor: Color {
         if day.totalTokens == 0 { return Color.primary.opacity(0.10) }
+        if isCapped { return .orange }
+        if scale.hasCappedOutlier { return .green }
         if ratio >= 0.72 { return .orange }
         return .green
+    }
+
+    private var accessibilityValue: String {
+        let value = "\(day.totalTokens.formatted()) tokens"
+        return isCapped ? "\(value), exceeds chart scale" : value
+    }
+}
+
+private struct DailyUsageScaleBreakShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let segmentWidth = rect.width * 0.36
+
+        path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX + segmentWidth, y: rect.minY))
+        path.move(to: CGPoint(x: rect.maxX - segmentWidth, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        return path
     }
 }
 
