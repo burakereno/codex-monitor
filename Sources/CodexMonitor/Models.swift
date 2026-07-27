@@ -101,6 +101,15 @@ struct RateLimitResetCredit: Decodable, Equatable, Identifiable {
     var expirationDate: Date? {
         expiresAt.map { Date(timeIntervalSince1970: TimeInterval($0)) }
     }
+
+    func expirationText(relativeTo referenceDate: Date) -> String {
+        guard let expirationDate else { return "No expiry" }
+        guard expirationDate > referenceDate else { return "Expired" }
+        return ResetTimeFormatting.detailedRemaining(
+            until: expirationDate,
+            relativeTo: referenceDate
+        )
+    }
 }
 
 struct CodexUsageSummary: Equatable {

@@ -617,12 +617,17 @@ private struct RateLimitResetCreditsCardView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 6) {
-                    ForEach(credits) { credit in
-                        RateLimitResetCreditTagView(credit: credit)
+                TimelineView(.periodic(from: .now, by: 60)) { context in
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: 6) {
+                        ForEach(credits) { credit in
+                            RateLimitResetCreditTagView(
+                                credit: credit,
+                                referenceDate: context.date
+                            )
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .statusSectionCard()
@@ -633,6 +638,7 @@ private struct RateLimitResetCreditsCardView: View {
 
 private struct RateLimitResetCreditTagView: View {
     let credit: RateLimitResetCredit
+    let referenceDate: Date
 
     var body: some View {
         expirationText
@@ -659,7 +665,10 @@ private struct RateLimitResetCreditTagView: View {
         }
 
         let date = expirationDate.formatted(.dateTime.month(.wide).day())
-        let remaining = ResetTimeFormatting.detailedRemaining(until: expirationDate)
+        let remaining = credit.expirationText(relativeTo: referenceDate)
+        if remaining == "Expired" {
+            return "Expired \(date)"
+        }
         return "Expires \(date), \(remaining) remaining"
     }
 
@@ -671,7 +680,7 @@ private struct RateLimitResetCreditTagView: View {
 
         return Text(expirationDate, format: .dateTime.month(.abbreviated).day())
             .foregroundColor(.white)
-        + Text(" · \(ResetTimeFormatting.detailedRemaining(until: expirationDate))")
+        + Text(" · \(credit.expirationText(relativeTo: referenceDate))")
             .foregroundColor(.secondary)
     }
 }

@@ -136,6 +136,50 @@ final class CodexMonitorModelTests: XCTestCase {
         )
     }
 
+    func testResetCreditExpirationTextAdvancesWithReferenceDate() {
+        let credit = RateLimitResetCredit(
+            id: "reset-1",
+            title: "Full reset",
+            description: nil,
+            resetType: "codexRateLimits",
+            status: "available",
+            grantedAt: 1_782_936_928,
+            expiresAt: 1_785_528_928
+        )
+        let screenshotDate = Date(timeIntervalSince1970: 1_785_134_582)
+
+        XCTAssertEqual(
+            credit.expirationText(relativeTo: screenshotDate),
+            "4d 14h"
+        )
+        XCTAssertEqual(
+            credit.expirationText(relativeTo: screenshotDate.addingTimeInterval(5 * 60 * 60)),
+            "4d 9h"
+        )
+    }
+
+    func testResetCreditExpirationTextReportsExpiredAtDeadline() {
+        let expirationDate = Date(timeIntervalSince1970: 1_785_528_928)
+        let credit = RateLimitResetCredit(
+            id: "reset-1",
+            title: "Full reset",
+            description: nil,
+            resetType: "codexRateLimits",
+            status: "available",
+            grantedAt: 1_782_936_928,
+            expiresAt: Int(expirationDate.timeIntervalSince1970)
+        )
+
+        XCTAssertEqual(
+            credit.expirationText(relativeTo: expirationDate),
+            "Expired"
+        )
+        XCTAssertEqual(
+            credit.expirationText(relativeTo: expirationDate.addingTimeInterval(60)),
+            "Expired"
+        )
+    }
+
     func testMenuBarTitleIncludesResetTimesWhenEnabled() async {
         let now = Date()
         UserDefaults.standard.set(true, forKey: MenuBarResetTimePreference.storageKey)
