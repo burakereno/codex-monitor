@@ -136,6 +136,55 @@ final class CodexMonitorModelTests: XCTestCase {
         )
     }
 
+    func testDetailedResetTextAdvancesForFiveHourAndWeeklyWindows() {
+        let screenshotDate = Date(timeIntervalSince1970: 1_785_136_530)
+        let fiveHourWindow = RateLimitWindow(
+            usedPercent: 40,
+            resetsAt: Int(screenshotDate.addingTimeInterval((4 * 60 + 30) * 60).timeIntervalSince1970),
+            windowDurationMins: 300
+        )
+        let weeklyWindow = RateLimitWindow(
+            usedPercent: 88,
+            resetsAt: 1_785_612_011,
+            windowDurationMins: 10_080
+        )
+
+        XCTAssertEqual(
+            fiveHourWindow.detailedResetText(relativeTo: screenshotDate),
+            "4h 30m"
+        )
+        XCTAssertEqual(
+            fiveHourWindow.detailedResetText(relativeTo: screenshotDate.addingTimeInterval(30 * 60)),
+            "4h"
+        )
+        XCTAssertEqual(
+            weeklyWindow.detailedResetText(relativeTo: screenshotDate),
+            "5d 13h"
+        )
+        XCTAssertEqual(
+            weeklyWindow.detailedResetText(relativeTo: screenshotDate.addingTimeInterval(5 * 60 * 60)),
+            "5d 8h"
+        )
+    }
+
+    func testDetailedResetTextReportsNowAtOrAfterDeadline() {
+        let resetDate = Date(timeIntervalSince1970: 1_785_612_011)
+        let window = RateLimitWindow(
+            usedPercent: 100,
+            resetsAt: Int(resetDate.timeIntervalSince1970),
+            windowDurationMins: 300
+        )
+
+        XCTAssertEqual(
+            window.detailedResetText(relativeTo: resetDate),
+            "now"
+        )
+        XCTAssertEqual(
+            window.detailedResetText(relativeTo: resetDate.addingTimeInterval(60)),
+            "now"
+        )
+    }
+
     func testResetCreditExpirationTextAdvancesWithReferenceDate() {
         let credit = RateLimitResetCredit(
             id: "reset-1",

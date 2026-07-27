@@ -204,6 +204,15 @@ extension RateLimitWindow {
         )
     }
 
+    func detailedResetText(relativeTo referenceDate: Date) -> String? {
+        guard let resetDate else { return nil }
+        guard resetDate > referenceDate else { return "now" }
+        return ResetTimeFormatting.detailedRemaining(
+            until: resetDate,
+            relativeTo: referenceDate
+        )
+    }
+
     var displayName: String {
         guard let windowDurationMins else { return "Usage" }
         if windowDurationMins == 300 { return "5 hours" }

@@ -1476,17 +1476,19 @@ private struct LimitCardView: View {
                 UsageBarView(value: displayMode.barValue(for: window), tint: tintColor)
             }
 
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                resetText
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    resetText(relativeTo: context.date)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
 
-                Spacer(minLength: 8)
+                    Spacer(minLength: 8)
 
-                Text(paceText)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(tintColor)
-                    .lineLimit(1)
+                    Text(paceText)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(tintColor)
+                        .lineLimit(1)
+                }
             }
         }
         .statusSectionCard()
@@ -1497,14 +1499,17 @@ private struct LimitCardView: View {
         return "\(percent)%"
     }
 
-    private var resetText: Text {
+    private func resetText(relativeTo referenceDate: Date) -> Text {
         guard let resetDate = window?.resetDate else {
             return Text("Resets unavailable")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(.secondary)
         }
 
-        let components = resetTextComponents(for: resetDate)
+        let components = resetTextComponents(
+            for: resetDate,
+            relativeTo: referenceDate
+        )
 
         return Text("Resets in: ")
             .font(.system(size: 11, weight: .medium))
@@ -1520,8 +1525,11 @@ private struct LimitCardView: View {
             .foregroundColor(.white)
     }
 
-    private func resetTextComponents(for resetDate: Date) -> (relative: String, absolute: String) {
-        let relativeText = ResetTimeFormatting.detailedRemaining(until: resetDate)
+    private func resetTextComponents(
+        for resetDate: Date,
+        relativeTo referenceDate: Date
+    ) -> (relative: String, absolute: String) {
+        let relativeText = window?.detailedResetText(relativeTo: referenceDate) ?? "now"
         let timeText = resetDate.formatted(date: .omitted, time: .shortened)
         let absoluteText: String
 
