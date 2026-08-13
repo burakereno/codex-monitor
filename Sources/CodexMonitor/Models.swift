@@ -341,3 +341,11 @@ enum MenuBarResetTimePreference {
         UserDefaults.standard.object(forKey: storageKey) as? Bool ?? false
     }
 }
+
+enum MenuBarFiveHourUsagePreference {
+    static let storageKey = "menuBarShowsFiveHourUsage"
+
+    static var showsFiveHourUsage: Bool {
+        UserDefaults.standard.object(forKey: storageKey) as? Bool ?? true
+    }
+}

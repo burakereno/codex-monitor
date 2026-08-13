@@ -6,6 +6,7 @@ struct StatusPanelView: View {
     let onPreferredHeightChange: (CGFloat) -> Void
     @AppStorage(LimitDisplayMode.storageKey) private var limitDisplayModeRaw = LimitDisplayMode.remaining.rawValue
     @AppStorage(MenuBarDisplayVersion.storageKey) private var menuBarDisplayVersionRaw = MenuBarDisplayVersion.version1.rawValue
+    @AppStorage(MenuBarFiveHourUsagePreference.storageKey) private var showMenuBarFiveHourUsage = true
     @AppStorage(MenuBarResetTimePreference.storageKey) private var showMenuBarResetTimes = false
     @AppStorage(DockIconPreference.showDockIconKey) private var showDockIcon = false
     @AppStorage(DockIconPreference.showDockValuesKey) private var showDockValues = false
@@ -90,6 +91,9 @@ struct StatusPanelView: View {
         .onChange(of: menuBarDisplayVersionRaw) { _, _ in
             model.updateMenuBarTitleForDisplayModeChange()
         }
+        .onChange(of: showMenuBarFiveHourUsage) { _, _ in
+            model.updateMenuBarTitleForDisplayModeChange()
+        }
         .onChange(of: showMenuBarResetTimes) { _, _ in
             model.updateMenuBarTitleForDisplayModeChange()
         }
@@ -165,6 +169,17 @@ struct StatusPanelView: View {
                     title: "Display",
                     subtitle: "Choose menu bar layout",
                     selection: $menuBarDisplayVersionRaw
+                )
+
+                Divider()
+                    .opacity(0.35)
+                    .padding(.vertical, 5)
+
+                SettingsToggleRowView(
+                    icon: "clock",
+                    title: "5-Hour Usage",
+                    subtitle: "Show the 5-hour value in the menu bar",
+                    isOn: $showMenuBarFiveHourUsage
                 )
 
                 Divider()

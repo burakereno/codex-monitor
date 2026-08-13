@@ -106,6 +106,7 @@ final class StatusBarController: NSObject {
             x = draw(
                 providerTitle: providerTitle,
                 displayVersion: title.displayVersion,
+                showsFiveHourUsage: title.showsFiveHourUsage,
                 x: x,
                 canvasHeight: height
             )
@@ -122,6 +123,7 @@ final class StatusBarController: NSObject {
     private func draw(
         providerTitle: MenuBarProviderTitle,
         displayVersion: MenuBarDisplayVersion,
+        showsFiveHourUsage: Bool,
         x: CGFloat,
         canvasHeight: CGFloat
     ) -> CGFloat {
@@ -130,14 +132,25 @@ final class StatusBarController: NSObject {
         let valueX = x + MenuBarDisplay.providerIconWidth + MenuBarDisplay.iconTextSpacing
         switch displayVersion {
         case .version1:
-            return drawVersion1(providerTitle: providerTitle, x: valueX, canvasHeight: canvasHeight)
+            return drawVersion1(
+                providerTitle: providerTitle,
+                showsFiveHourUsage: showsFiveHourUsage,
+                x: valueX,
+                canvasHeight: canvasHeight
+            )
         case .version2:
-            return drawVersion2(providerTitle: providerTitle, x: valueX, canvasHeight: canvasHeight)
+            return drawVersion2(
+                providerTitle: providerTitle,
+                showsFiveHourUsage: showsFiveHourUsage,
+                x: valueX,
+                canvasHeight: canvasHeight
+            )
         }
     }
 
     private func drawVersion1(
         providerTitle: MenuBarProviderTitle,
+        showsFiveHourUsage: Bool,
         x valueX: CGFloat,
         canvasHeight: CGFloat
     ) -> CGFloat {
@@ -157,6 +170,24 @@ final class StatusBarController: NSObject {
         let primary = providerTitle.primary as NSString
         let separator = "/" as NSString
         let weekly = providerTitle.weekly as NSString
+
+        if !showsFiveHourUsage {
+            let textHeight = max(
+                weekly.size(withAttributes: valueAttrs).height,
+                resetTextHeight(providerTitle.weeklyReset, attributes: resetAttrs)
+            )
+            let y = floor((canvasHeight - textHeight) / 2)
+            weekly.draw(at: NSPoint(x: valueX, y: y), withAttributes: valueAttrs)
+            let weeklyEndX = valueX + weekly.size(withAttributes: valueAttrs).width
+            return drawResetText(
+                providerTitle.weeklyReset,
+                x: weeklyEndX,
+                y: y,
+                canvasHeight: canvasHeight,
+                attributes: resetAttrs
+            )
+        }
+
         let textHeight = max(
             max(primary.size(withAttributes: valueAttrs).height, weekly.size(withAttributes: valueAttrs).height),
             resetTextHeight(providerTitle: providerTitle, attributes: resetAttrs)
@@ -187,6 +218,7 @@ final class StatusBarController: NSObject {
 
     private func drawVersion2(
         providerTitle: MenuBarProviderTitle,
+        showsFiveHourUsage: Bool,
         x valueX: CGFloat,
         canvasHeight: CGFloat
     ) -> CGFloat {
@@ -207,6 +239,27 @@ final class StatusBarController: NSObject {
         let primary = providerTitle.primary as NSString
         let weeklyLabel = "W" as NSString
         let weekly = providerTitle.weekly as NSString
+
+        if !showsFiveHourUsage {
+            let textHeight = max(
+                max(weeklyLabel.size(withAttributes: labelAttrs).height, weekly.size(withAttributes: valueAttrs).height),
+                resetTextHeight(providerTitle.weeklyReset, attributes: resetAttrs)
+            )
+            let y = floor((canvasHeight - textHeight) / 2)
+            weeklyLabel.draw(at: NSPoint(x: valueX, y: y), withAttributes: labelAttrs)
+            let weeklyX = valueX + weeklyLabel.size(withAttributes: labelAttrs).width
+                + MenuBarDisplay.labelValueSpacing
+            weekly.draw(at: NSPoint(x: weeklyX, y: y), withAttributes: valueAttrs)
+            let weeklyEndX = weeklyX + weekly.size(withAttributes: valueAttrs).width
+            return drawResetText(
+                providerTitle.weeklyReset,
+                x: weeklyEndX,
+                y: y,
+                canvasHeight: canvasHeight,
+                attributes: resetAttrs
+            )
+        }
+
         let textHeight = max(
             max(primaryLabel.size(withAttributes: labelAttrs).height, primary.size(withAttributes: valueAttrs).height),
             max(
@@ -270,6 +323,14 @@ final class StatusBarController: NSObject {
                 return (reset as NSString).size(withAttributes: attributes).height
             }
         return heights.max() ?? 0
+    }
+
+    private func resetTextHeight(
+        _ reset: String?,
+        attributes: [NSAttributedString.Key: Any]
+    ) -> CGFloat {
+        guard let reset else { return 0 }
+        return (reset as NSString).size(withAttributes: attributes).height
     }
 
     private func drawProviderIcon(_ provider: TokenProvider, x: CGFloat, canvasHeight: CGFloat) {
@@ -361,7 +422,11 @@ private enum MenuBarDisplay {
             partial + ceil(
                 providerIconWidth
                     + iconTextSpacing
-                    + contentWidth(for: provider, displayVersion: title.displayVersion)
+                    + contentWidth(
+                        for: provider,
+                        displayVersion: title.displayVersion,
+                        showsFiveHourUsage: title.showsFiveHourUsage
+                    )
             )
         }
         let spacings = CGFloat(max(providers.count - 1, 0)) * providerSpacing
@@ -370,7 +435,8 @@ private enum MenuBarDisplay {
 
     private static func contentWidth(
         for provider: MenuBarProviderTitle,
-        displayVersion: MenuBarDisplayVersion
+        displayVersion: MenuBarDisplayVersion,
+        showsFiveHourUsage: Bool
     ) -> CGFloat {
         let attrsLabel: [NSAttributedString.Key: Any] = [.font: labelFont]
         let attrsValue: [NSAttributedString.Key: Any] = [.font: valueFont]
@@ -382,11 +448,17 @@ private enum MenuBarDisplay {
 
         switch displayVersion {
         case .version1:
+            guard showsFiveHourUsage else {
+                return weeklyWidth + weeklyResetWidth
+            }
             let separatorWidth = ("/" as NSString).size(withAttributes: attrsLabel).width
             return primaryWidth + primaryResetWidth + separatorWidth + weeklyWidth + weeklyResetWidth + 2
         case .version2:
-            let primaryLabelWidth = ("5h" as NSString).size(withAttributes: attrsLabel).width
             let weeklyLabelWidth = ("W" as NSString).size(withAttributes: attrsLabel).width
+            guard showsFiveHourUsage else {
+                return weeklyLabelWidth + labelValueSpacing + weeklyWidth + weeklyResetWidth
+            }
+            let primaryLabelWidth = ("5h" as NSString).size(withAttributes: attrsLabel).width
             return primaryLabelWidth
                 + labelValueSpacing
                 + primaryWidth

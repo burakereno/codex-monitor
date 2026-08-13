@@ -8,12 +8,14 @@ final class CodexMonitorModelTests: XCTestCase {
         super.setUp()
         UserDefaults.standard.removeObject(forKey: LimitDisplayMode.storageKey)
         UserDefaults.standard.removeObject(forKey: MenuBarDisplayVersion.storageKey)
+        UserDefaults.standard.removeObject(forKey: MenuBarFiveHourUsagePreference.storageKey)
         UserDefaults.standard.removeObject(forKey: MenuBarResetTimePreference.storageKey)
     }
 
     override func tearDown() {
         UserDefaults.standard.removeObject(forKey: LimitDisplayMode.storageKey)
         UserDefaults.standard.removeObject(forKey: MenuBarDisplayVersion.storageKey)
+        UserDefaults.standard.removeObject(forKey: MenuBarFiveHourUsagePreference.storageKey)
         UserDefaults.standard.removeObject(forKey: MenuBarResetTimePreference.storageKey)
         super.tearDown()
     }
@@ -245,6 +247,31 @@ final class CodexMonitorModelTests: XCTestCase {
 
         XCTAssertEqual(model.menuBarTitle.providers.first?.primaryReset, "2h")
         XCTAssertEqual(model.menuBarTitle.providers.first?.weeklyReset, "3d")
+    }
+
+    func testMenuBarTitleKeepsFiveHourUsageVisibleByDefault() async {
+        let reader = MockRateLimitsReader(results: [
+            .success(Self.accountSnapshot(usedPercent: 25))
+        ])
+        let model = CodexMonitorModel(codexClient: reader, codexUsageReader: MockUsageSummaryReader())
+
+        await model.refresh()
+
+        XCTAssertTrue(model.menuBarTitle.showsFiveHourUsage)
+    }
+
+    func testMenuBarTitleCanHideFiveHourUsageWithoutRemovingItsValue() async {
+        UserDefaults.standard.set(false, forKey: MenuBarFiveHourUsagePreference.storageKey)
+        let reader = MockRateLimitsReader(results: [
+            .success(Self.accountSnapshot(usedPercent: 25))
+        ])
+        let model = CodexMonitorModel(codexClient: reader, codexUsageReader: MockUsageSummaryReader())
+
+        await model.refresh()
+
+        XCTAssertFalse(model.menuBarTitle.showsFiveHourUsage)
+        XCTAssertEqual(model.menuBarTitle.providers.first?.primary, "75%")
+        XCTAssertEqual(model.menuBarTitle.providers.first?.weekly, "90%")
     }
 
     func testRefreshUpdatesUsageSummary() async {
