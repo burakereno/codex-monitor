@@ -224,10 +224,16 @@ private actor CodexAppServerConnection {
         let (lines, lineContinuation) = AsyncStream.makeStream(of: Data.self)
         let outputHandle = stdout.fileHandleForReading
         DispatchQueue.global(qos: .utility).async {
-            while let line = Self.readLineData(from: outputHandle) {
+            defer {
+                try? outputHandle.close()
+                lineContinuation.finish()
+            }
+            var reader = AppServerLineReader(handle: outputHandle)
+            // EOF and read errors both end the stream; readerFinished() fails
+            // outstanding requests and resets the connection.
+            while let line = try? reader.readLine() {
                 lineContinuation.yield(line)
             }
-            lineContinuation.finish()
         }
 
         readerTask = Task { [weak self] in
@@ -346,23 +352,6 @@ private actor CodexAppServerConnection {
         let continuations = eventContinuations.values
         eventContinuations.removeAll()
         continuations.forEach { $0.finish() }
-    }
-
-    private nonisolated static func readLineData(from handle: FileHandle) -> Data? {
-        var buffer = Data()
-
-        while true {
-            let chunk = handle.readData(ofLength: 1)
-            if chunk.isEmpty {
-                return buffer.isEmpty ? nil : buffer
-            }
-
-            if chunk.first == 0x0a {
-                return buffer
-            }
-
-            buffer.append(chunk)
-        }
     }
 }
 

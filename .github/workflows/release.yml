@@ -29,6 +29,9 @@ jobs:
         with:
           xcode-version: latest-stable
 
+      - name: Run Tests
+        run: swift test
+
       - name: Validate Signing Secrets
         env:
           MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}

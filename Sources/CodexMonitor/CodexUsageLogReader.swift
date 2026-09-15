@@ -191,23 +191,32 @@ actor CodexUsageLogReader: CodexUsageSummaryReading {
         defer { try? handle.close() }
 
         var buffer = Data()
-        while let chunk = try handle.read(upToCount: 1_048_576), !chunk.isEmpty {
-            buffer.append(chunk)
-            var lineStart = buffer.startIndex
+        while true {
+            // Release Foundation's temporary read/decoding objects after each
+            // chunk instead of retaining them for an entire session scan.
+            let didRead = try autoreleasepool {
+                guard let chunk = try handle.read(upToCount: 1_048_576), !chunk.isEmpty else {
+                    return false
+                }
+                buffer.append(chunk)
+                var lineStart = buffer.startIndex
 
-            while lineStart < buffer.endIndex,
-                  let newline = buffer[lineStart...].firstIndex(of: 0x0a) {
-                body(Data(buffer[lineStart..<newline]))
-                lineStart = buffer.index(after: newline)
-            }
+                while lineStart < buffer.endIndex,
+                      let newline = buffer[lineStart...].firstIndex(of: 0x0a) {
+                    body(Data(buffer[lineStart..<newline]))
+                    lineStart = buffer.index(after: newline)
+                }
 
-            if lineStart > buffer.startIndex {
-                buffer.removeSubrange(buffer.startIndex..<lineStart)
+                if lineStart > buffer.startIndex {
+                    buffer.removeSubrange(buffer.startIndex..<lineStart)
+                }
+                return true
             }
+            if !didRead { break }
         }
 
         if !buffer.isEmpty {
-            body(buffer)
+            autoreleasepool { body(buffer) }
         }
     }
 
