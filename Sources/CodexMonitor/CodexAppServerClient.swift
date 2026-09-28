@@ -35,7 +35,9 @@ struct CodexBinaryLocator: @unchecked Sendable {
             NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.openai.codex")
         },
         fallbackPaths: [String] = [
+            "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
             "/Applications/ChatGPT.app/Contents/Resources/codex",
+            "/Applications/Codex.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
             "/Applications/Codex.app/Contents/Resources/codex",
             "/opt/homebrew/bin/codex",
             "/usr/local/bin/codex",
@@ -51,6 +53,10 @@ struct CodexBinaryLocator: @unchecked Sendable {
         var candidates: [URL] = []
 
         if let applicationURL = applicationURLProvider() {
+            // Newer desktop releases package the CLI in its own app bundle.
+            candidates.append(applicationURL.appendingPathComponent(
+                "Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"
+            ))
             candidates.append(applicationURL.appendingPathComponent("Contents/Resources/codex"))
         }
 
