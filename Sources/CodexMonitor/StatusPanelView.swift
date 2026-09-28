@@ -6,7 +6,7 @@ struct StatusPanelView: View {
     let onPreferredHeightChange: (CGFloat) -> Void
     @AppStorage(LimitDisplayMode.storageKey) private var limitDisplayModeRaw = LimitDisplayMode.remaining.rawValue
     @AppStorage(MenuBarDisplayVersion.storageKey) private var menuBarDisplayVersionRaw = MenuBarDisplayVersion.version1.rawValue
-    @AppStorage(MenuBarFiveHourUsagePreference.storageKey) private var showMenuBarFiveHourUsage = true
+    @AppStorage(FiveHourUsagePreference.storageKey) private var showFiveHourUsage = false
     @AppStorage(MenuBarResetTimePreference.storageKey) private var showMenuBarResetTimes = false
     @AppStorage(DockIconPreference.showDockIconKey) private var showDockIcon = false
     @AppStorage(DockIconPreference.showDockValuesKey) private var showDockValues = false
@@ -91,8 +91,9 @@ struct StatusPanelView: View {
         .onChange(of: menuBarDisplayVersionRaw) { _, _ in
             model.updateMenuBarTitleForDisplayModeChange()
         }
-        .onChange(of: showMenuBarFiveHourUsage) { _, _ in
+        .onChange(of: showFiveHourUsage) { _, _ in
             model.updateMenuBarTitleForDisplayModeChange()
+            notifyDockSettingsChanged()
         }
         .onChange(of: showMenuBarResetTimes) { _, _ in
             model.updateMenuBarTitleForDisplayModeChange()
@@ -134,7 +135,8 @@ struct StatusPanelView: View {
                 snapshot: model.codexSnapshot,
                 message: model.codexMessage,
                 statusLabel: nil,
-                displayMode: limitDisplayMode
+                displayMode: limitDisplayMode,
+                showsFiveHourUsage: showFiveHourUsage
             ) {
                 VStack(spacing: 10) {
                     if let resetCredits = model.rateLimitResetCredits {
@@ -176,17 +178,6 @@ struct StatusPanelView: View {
                     .padding(.vertical, 5)
 
                 SettingsToggleRowView(
-                    icon: "clock",
-                    title: "5-Hour Usage",
-                    subtitle: "Show the 5-hour value in the menu bar",
-                    isOn: $showMenuBarFiveHourUsage
-                )
-
-                Divider()
-                    .opacity(0.35)
-                    .padding(.vertical, 5)
-
-                SettingsToggleRowView(
                     icon: "clock.arrow.circlepath",
                     title: "Reset Times",
                     subtitle: "Show reset countdowns in the menu bar",
@@ -211,11 +202,22 @@ struct StatusPanelView: View {
                     title: "Values",
                     subtitle: "Show the 5h value on the Dock icon",
                     isOn: $showDockValues,
-                    disabled: !showDockIcon
+                    disabled: !showDockIcon || !showFiveHourUsage
                 )
             }
 
-            SettingsSectionView(title: "USAGE BARS") {
+            SettingsSectionView(title: "USAGE") {
+                SettingsToggleRowView(
+                    icon: "clock",
+                    title: "5-Hour Usage",
+                    subtitle: "Show in the panel, menu bar and Dock",
+                    isOn: $showFiveHourUsage
+                )
+
+                Divider()
+                    .opacity(0.35)
+                    .padding(.vertical, 5)
+
                 SettingsPickerRowView(
                     icon: "chart.bar.xaxis",
                     title: "Usage Logic",
@@ -229,7 +231,8 @@ struct StatusPanelView: View {
 
                 SettingsUsagePreviewView(
                     snapshot: model.codexSnapshot,
-                    displayMode: limitDisplayMode
+                    displayMode: limitDisplayMode,
+                    showsFiveHourUsage: showFiveHourUsage
                 )
             }
 
@@ -528,6 +531,7 @@ private struct ProviderUsageSectionView<Accessory: View>: View {
     let message: String?
     let statusLabel: String?
     let displayMode: LimitDisplayMode
+    let showsFiveHourUsage: Bool
     @ViewBuilder let accessory: () -> Accessory
 
     var body: some View {
@@ -548,13 +552,15 @@ private struct ProviderUsageSectionView<Accessory: View>: View {
 
             if let snapshot {
                 VStack(spacing: 10) {
-                    LimitCardView(
-                        icon: "clock",
-                        title: "5-Hour Session",
-                        window: snapshot.primary,
-                        showsWeekScale: false,
-                        displayMode: displayMode
-                    )
+                    if showsFiveHourUsage {
+                        LimitCardView(
+                            icon: "clock",
+                            title: "5-Hour Session",
+                            window: snapshot.primary,
+                            showsWeekScale: false,
+                            displayMode: displayMode
+                        )
+                    }
                     LimitCardView(
                         icon: "calendar",
                         title: "Weekly Limit",
@@ -1396,6 +1402,7 @@ private struct SettingsAboutCardView: View {
 private struct SettingsUsagePreviewView: View {
     let snapshot: RateLimitsSnapshot?
     let displayMode: LimitDisplayMode
+    let showsFiveHourUsage: Bool
 
     private var primaryWindow: RateLimitWindow {
         snapshot?.primary ?? RateLimitWindow(usedPercent: 35, resetsAt: nil, windowDurationMins: 300)
@@ -1407,7 +1414,9 @@ private struct SettingsUsagePreviewView: View {
 
     var body: some View {
         VStack(spacing: 7) {
-            previewRow(title: "5h", window: primaryWindow, segmented: false)
+            if showsFiveHourUsage {
+                previewRow(title: "5h", window: primaryWindow, segmented: false)
+            }
             previewRow(title: "Weekly", window: weeklyWindow, segmented: true)
         }
         .padding(.vertical, 2)

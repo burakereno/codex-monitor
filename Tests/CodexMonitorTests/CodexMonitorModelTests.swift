@@ -8,14 +8,18 @@ final class CodexMonitorModelTests: XCTestCase {
         super.setUp()
         UserDefaults.standard.removeObject(forKey: LimitDisplayMode.storageKey)
         UserDefaults.standard.removeObject(forKey: MenuBarDisplayVersion.storageKey)
-        UserDefaults.standard.removeObject(forKey: MenuBarFiveHourUsagePreference.storageKey)
+        UserDefaults.standard.removeObject(forKey: FiveHourUsagePreference.storageKey)
+        UserDefaults.standard.removeObject(forKey: "menuBarShowsFiveHourUsage")
+        UserDefaults.standard.removeObject(forKey: DockIconPreference.showDockValuesKey)
         UserDefaults.standard.removeObject(forKey: MenuBarResetTimePreference.storageKey)
     }
 
     override func tearDown() {
         UserDefaults.standard.removeObject(forKey: LimitDisplayMode.storageKey)
         UserDefaults.standard.removeObject(forKey: MenuBarDisplayVersion.storageKey)
-        UserDefaults.standard.removeObject(forKey: MenuBarFiveHourUsagePreference.storageKey)
+        UserDefaults.standard.removeObject(forKey: FiveHourUsagePreference.storageKey)
+        UserDefaults.standard.removeObject(forKey: "menuBarShowsFiveHourUsage")
+        UserDefaults.standard.removeObject(forKey: DockIconPreference.showDockValuesKey)
         UserDefaults.standard.removeObject(forKey: MenuBarResetTimePreference.storageKey)
         super.tearDown()
     }
@@ -249,19 +253,7 @@ final class CodexMonitorModelTests: XCTestCase {
         XCTAssertEqual(model.menuBarTitle.providers.first?.weeklyReset, "3d")
     }
 
-    func testMenuBarTitleKeepsFiveHourUsageVisibleByDefault() async {
-        let reader = MockRateLimitsReader(results: [
-            .success(Self.accountSnapshot(usedPercent: 25))
-        ])
-        let model = CodexMonitorModel(codexClient: reader, codexUsageReader: MockUsageSummaryReader())
-
-        await model.refresh()
-
-        XCTAssertTrue(model.menuBarTitle.showsFiveHourUsage)
-    }
-
-    func testMenuBarTitleCanHideFiveHourUsageWithoutRemovingItsValue() async {
-        UserDefaults.standard.set(false, forKey: MenuBarFiveHourUsagePreference.storageKey)
+    func testFiveHourUsageIsHiddenByDefaultWithoutDiscardingData() async {
         let reader = MockRateLimitsReader(results: [
             .success(Self.accountSnapshot(usedPercent: 25))
         ])
@@ -270,8 +262,47 @@ final class CodexMonitorModelTests: XCTestCase {
         await model.refresh()
 
         XCTAssertFalse(model.menuBarTitle.showsFiveHourUsage)
+        XCTAssertEqual(model.codexSnapshot?.primary?.usedPercent, 25)
+        XCTAssertEqual(model.menuBarTitle.providers.first?.primary, "75%")
+    }
+
+    func testFiveHourUsageCanBeReenabledAndHiddenWithoutRefetching() async {
+        UserDefaults.standard.set(true, forKey: FiveHourUsagePreference.storageKey)
+        let reader = MockRateLimitsReader(results: [
+            .success(Self.accountSnapshot(usedPercent: 25))
+        ])
+        let model = CodexMonitorModel(codexClient: reader, codexUsageReader: MockUsageSummaryReader())
+
+        await model.refresh()
+
+        XCTAssertTrue(model.menuBarTitle.showsFiveHourUsage)
         XCTAssertEqual(model.menuBarTitle.providers.first?.primary, "75%")
         XCTAssertEqual(model.menuBarTitle.providers.first?.weekly, "90%")
+
+        UserDefaults.standard.set(false, forKey: FiveHourUsagePreference.storageKey)
+        model.updateMenuBarTitleForDisplayModeChange()
+
+        XCTAssertFalse(model.menuBarTitle.showsFiveHourUsage)
+        XCTAssertEqual(model.codexSnapshot?.primary?.usedPercent, 25)
+        XCTAssertEqual(model.menuBarTitle.providers.first?.weekly, "90%")
+    }
+
+    func testLegacyMenuBarPreferenceDoesNotEnableAppWideFiveHourUsage() {
+        UserDefaults.standard.set(true, forKey: "menuBarShowsFiveHourUsage")
+
+        XCTAssertFalse(FiveHourUsagePreference.showsFiveHourUsage)
+    }
+
+    func testDockValuesRespectFiveHourVisibilityWithoutDiscardingDockPreference() {
+        UserDefaults.standard.set(true, forKey: DockIconPreference.showDockValuesKey)
+        XCTAssertFalse(DockIconPreference.showDockValues)
+
+        UserDefaults.standard.set(true, forKey: FiveHourUsagePreference.storageKey)
+        XCTAssertTrue(DockIconPreference.showDockValues)
+
+        UserDefaults.standard.set(false, forKey: FiveHourUsagePreference.storageKey)
+        XCTAssertFalse(DockIconPreference.showDockValues)
+        XCTAssertTrue(UserDefaults.standard.bool(forKey: DockIconPreference.showDockValuesKey))
     }
 
     func testRefreshUpdatesUsageSummary() async {

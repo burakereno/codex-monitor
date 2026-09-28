@@ -329,7 +329,7 @@ enum MenuBarDisplayVersion: String, CaseIterable, Identifiable {
         case .version1:
             return "Icon and compact percentages"
         case .version2:
-            return "Icon, 5h percent, then W percent"
+            return "Icon and labeled usage percentages"
         }
     }
 }
@@ -342,10 +342,12 @@ enum MenuBarResetTimePreference {
     }
 }
 
-enum MenuBarFiveHourUsagePreference {
-    static let storageKey = "menuBarShowsFiveHourUsage"
+enum FiveHourUsagePreference {
+    // A new key keeps the temporary app-wide default off, including upgrades
+    // that previously enabled the menu-bar-only preference.
+    static let storageKey = "showsFiveHourUsage"
 
     static var showsFiveHourUsage: Bool {
-        UserDefaults.standard.object(forKey: storageKey) as? Bool ?? true
+        UserDefaults.standard.object(forKey: storageKey) as? Bool ?? false
     }
 }

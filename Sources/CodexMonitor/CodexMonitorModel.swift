@@ -107,7 +107,7 @@ final class CodexMonitorModel: ObservableObject {
         return MenuBarTitle(
             displayVersion: menuBarDisplayVersion,
             providers: providers,
-            showsFiveHourUsage: menuBarShowsFiveHourUsage
+            showsFiveHourUsage: FiveHourUsagePreference.showsFiveHourUsage
         )
     }
 
@@ -133,10 +133,6 @@ final class CodexMonitorModel: ObservableObject {
 
     private var menuBarShowsResetTimes: Bool {
         MenuBarResetTimePreference.showsResetTimes
-    }
-
-    private var menuBarShowsFiveHourUsage: Bool {
-        MenuBarFiveHourUsagePreference.showsFiveHourUsage
     }
 
     private func refreshRateLimits() async {
@@ -310,7 +306,7 @@ struct MenuBarTitle: Equatable {
     init(
         displayVersion: MenuBarDisplayVersion,
         providers: [MenuBarProviderTitle],
-        showsFiveHourUsage: Bool = true
+        showsFiveHourUsage: Bool = false
     ) {
         self.displayVersion = displayVersion
         self.providers = providers

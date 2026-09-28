@@ -14,7 +14,8 @@ enum DockIconPreference {
     }
 
     static var showDockValues: Bool {
-        UserDefaults.standard.object(forKey: showDockValuesKey) as? Bool ?? false
+        FiveHourUsagePreference.showsFiveHourUsage
+            && (UserDefaults.standard.object(forKey: showDockValuesKey) as? Bool ?? false)
     }
 }
 
