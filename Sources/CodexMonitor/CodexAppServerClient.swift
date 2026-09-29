@@ -6,6 +6,7 @@ enum CodexAppServerError: LocalizedError {
     case launchFailed(String)
     case timeout
     case missingRateLimits
+    case authenticationRequired
     case serverError(String)
 
     var errorDescription: String? {
@@ -18,9 +19,20 @@ enum CodexAppServerError: LocalizedError {
             return "Codex app-server yanit vermedi."
         case .missingRateLimits:
             return "Codex limit verisi okunamadi."
+        case .authenticationRequired:
+            return "Codex oturumu yenilenemedi. Codex uygulamasinda tekrar giris yapip Refresh'e basin."
         case .serverError(let message):
             return message
         }
+    }
+
+    static func fromRPCError(_ error: [String: Any]) -> CodexAppServerError {
+        let message = error["message"] as? String ?? "Codex limit verisi okunamadi."
+        let authenticationPattern = #"(?i)\b401\b|\bunauthorized\b|\bnot logged in\b|\bnot authenticated\b"#
+        if message.range(of: authenticationPattern, options: .regularExpression) != nil {
+            return .authenticationRequired
+        }
+        return .serverError(message)
     }
 }
 
@@ -98,6 +110,7 @@ private actor CodexAppServerConnection {
     private let decoder = JSONDecoder()
 
     private var state = State.stopped
+    private var connectionID: UUID?
     private var process: Process?
     private var inputHandle: FileHandle?
     private var readerTask: Task<Void, Never>?
@@ -113,13 +126,28 @@ private actor CodexAppServerConnection {
 
     func readRateLimits() async throws -> CodexAccountSnapshot {
         try await ensureStarted()
+        let readingConnectionID = connectionID
+        do {
+            return try await readRateLimitsOnCurrentConnection()
+        } catch CodexAppServerError.authenticationRequired {
+            // Reload the CLI's saved login after a plan/account change. Only
+            // the failed connection is replaced; each read retries at most once.
+            if connectionID == readingConnectionID {
+                failConnection(with: CodexAppServerError.authenticationRequired)
+            }
+            try await ensureStarted()
+            return try await readRateLimitsOnCurrentConnection()
+        }
+    }
+
+    private func readRateLimitsOnCurrentConnection() async throws -> CodexAccountSnapshot {
         let response = try await sendRequest(
             method: "account/rateLimits/read",
             params: NSNull()
         )
 
         if let error = response["error"] as? [String: Any] {
-            throw CodexAppServerError.serverError(String(describing: error))
+            throw CodexAppServerError.fromRPCError(error)
         }
 
         guard let result = response["result"] else {
@@ -173,9 +201,11 @@ private actor CodexAppServerConnection {
             }
         case .stopped:
             state = .starting
+            let startingConnectionID = UUID()
+            connectionID = startingConnectionID
             do {
-                try startProcess()
-                _ = try await sendRequest(
+                try startProcess(connectionID: startingConnectionID)
+                let response = try await sendRequest(
                     method: "initialize",
                     params: [
                         "clientInfo": [
@@ -193,19 +223,25 @@ private actor CodexAppServerConnection {
                         ]
                     ]
                 )
+                if let error = response["error"] as? [String: Any] {
+                    throw CodexAppServerError.fromRPCError(error)
+                }
+                guard connectionID == startingConnectionID else { throw CancellationError() }
                 try sendNotification(method: "initialized")
                 state = .ready
                 let waiters = startupWaiters
                 startupWaiters.removeAll()
                 waiters.forEach { $0.resume() }
             } catch {
-                failConnection(with: error)
+                if connectionID == startingConnectionID {
+                    failConnection(with: error)
+                }
                 throw error
             }
         }
     }
 
-    private func startProcess() throws {
+    private func startProcess(connectionID: UUID) throws {
         let codexURL = try binaryLocator.locate()
         let process = Process()
         let stdin = Pipe()
@@ -245,14 +281,14 @@ private actor CodexAppServerConnection {
         readerTask = Task { [weak self] in
             for await line in lines {
                 guard !Task.isCancelled else { return }
-                await self?.receive(line)
+                await self?.receive(line, connectionID: connectionID)
             }
-            await self?.readerFinished()
+            await self?.readerFinished(connectionID: connectionID)
         }
     }
 
     private func sendRequest(method: String, params: Any) async throws -> [String: Any] {
-        guard process?.isRunning == true, let inputHandle else {
+        guard process?.isRunning == true, let inputHandle, let connectionID else {
             throw CodexAppServerError.launchFailed("Connection is not running.")
         }
 
@@ -271,7 +307,7 @@ private actor CodexAppServerConnection {
                 } catch {
                     return
                 }
-                await self?.requestTimedOut(requestID)
+                await self?.requestTimedOut(requestID, connectionID: connectionID)
             }
             pendingRequests[requestID] = PendingRequest(
                 continuation: continuation,
@@ -291,7 +327,8 @@ private actor CodexAppServerConnection {
         inputHandle.write(Data([0x0a]))
     }
 
-    private func receive(_ line: Data) {
+    private func receive(_ line: Data, connectionID: UUID) {
+        guard self.connectionID == connectionID else { return }
         guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else {
             return
         }
@@ -317,13 +354,14 @@ private actor CodexAppServerConnection {
         eventContinuations.values.forEach { $0.yield(snapshot) }
     }
 
-    private func requestTimedOut(_ requestID: Int) {
+    private func requestTimedOut(_ requestID: Int, connectionID: UUID) {
+        guard self.connectionID == connectionID else { return }
         guard pendingRequests[requestID] != nil else { return }
         failConnection(with: CodexAppServerError.timeout)
     }
 
-    private func readerFinished() {
-        guard state != .stopped else { return }
+    private func readerFinished(connectionID: UUID) {
+        guard self.connectionID == connectionID, state != .stopped else { return }
         failConnection(with: CodexAppServerError.missingRateLimits)
     }
 
@@ -333,6 +371,7 @@ private actor CodexAppServerConnection {
 
     private func failConnection(with error: Error) {
         state = .stopped
+        connectionID = nil
 
         readerTask?.cancel()
         readerTask = nil

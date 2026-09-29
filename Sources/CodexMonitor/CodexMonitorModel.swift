@@ -186,6 +186,11 @@ final class CodexMonitorModel: ObservableObject {
     private func readConfirmedRateLimits() async throws -> CodexAccountSnapshot? {
         let candidate = try await codexClient.readRateLimits()
         let current = codexSnapshot
+        if let currentPlan = current?.planType,
+           let candidatePlan = candidate.rateLimits.planType,
+           currentPlan != candidatePlan {
+            return candidate
+        }
         let requiresConfirmation = if let current {
             isSuspiciousUsageRecovery(from: current, to: candidate.rateLimits)
         } else {

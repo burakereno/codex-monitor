@@ -66,6 +66,9 @@ extension RateLimitsSnapshot {
 
     func mergingSparseUpdate(_ update: RateLimitsSnapshot) -> RateLimitsSnapshot {
         let normalized = update.normalizedCodexWindows
+        if let planType, let updatedPlanType = normalized.planType, planType != updatedPlanType {
+            return normalized
+        }
         return RateLimitsSnapshot(
             limitId: normalized.limitId ?? limitId,
             limitName: normalized.limitName ?? limitName,
