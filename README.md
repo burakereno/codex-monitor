@@ -1,7 +1,7 @@
 # Codex Monitor
 
 <p align="center">
-  <img src="https://codex-monitor.burakerenoglu.com/apps/codex-monitor/icon-rounded-20261030.webp" alt="Codex Monitor" width="340" height="340">
+  <img src="https://codex-monitor.burakerenoglu.com/apps/codex-monitor/icon-rounded-20261030.webp" alt="Codex Monitor" width="340">
 </p>
 
 **Lightweight macOS menu bar Codex usage monitor.** Track 5-hour usage, weekly usage, reset times, and credits at a glance — right from your menu bar.
